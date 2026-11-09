@@ -69,8 +69,7 @@ public partial class MainWindow : Window
     private IVcsProvider CreateProvider(VcsKind kind)
     {
         _settings.ExecutablePaths.TryGetValue(kind, out var configured);
-        var executable = string.IsNullOrWhiteSpace(configured) ? kind switch
-        { VcsKind.Git => "git", VcsKind.Svn => "svn", VcsKind.Perforce => "p4", _ => "lore" } : configured;
+        var executable = VcsTools.ResolveExecutable(kind, configured);
         return kind switch
         {
             VcsKind.Git => new GitProvider(_runner, executable),

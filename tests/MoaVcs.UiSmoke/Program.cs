@@ -57,8 +57,16 @@ internal static class Program
             while (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible && DateTime.UtcNow < deadline) Pump();
             if (((TextBlock)repoWindow.FindName("HistoryHint")).Text.Length == 0) throw new InvalidOperationException("History view did not load.");
             // Settings dialog initialization and layout must not install registry keys.
-            var settingsWindow = new SettingsWindow(new AppSettings(), settings, new MoaVcs.Core.ProcessCommandRunner());
+            var opened = new List<Uri>();
+            var settingsWindow = new SettingsWindow(new AppSettings(), settings, new MoaVcs.Core.ProcessCommandRunner(), opened.Add);
             Render(settingsWindow, Path.Combine(output, "settings.png"));
+            foreach (var kind in Enum.GetValues<MoaVcs.Core.VcsKind>())
+            {
+                var download = Descendants((DependencyObject)settingsWindow.Content).OfType<Button>().Single(button => button.Name == "Download" + kind);
+                download.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                if (opened[^1] != VcsTools.Get(kind).DownloadUrl) throw new InvalidOperationException("Wrong download URL for " + kind);
+            }
+            if (opened.Count != 4) throw new InvalidOperationException("All VCS download buttons must work.");
             var createWindow = new CreateRepositoryWindow(kind => kind switch
             {
                 MoaVcs.Core.VcsKind.Git => new MoaVcs.Core.Providers.GitProvider(new MoaVcs.Core.ProcessCommandRunner()),
@@ -67,7 +75,7 @@ internal static class Program
                 _ => new MoaVcs.Core.Providers.LoreProvider()
             });
             Render(createWindow, Path.Combine(output, "create.png"));
-            Console.WriteLine($"PASS: WPF welcome, repository, history, settings, create and layout rendering. {output}");
+            Console.WriteLine($"PASS: WPF welcome, repository, history, settings, downloads, create and layout rendering. {output}");
             app.Shutdown();
             return 0;
         }
@@ -93,6 +101,16 @@ internal static class Program
         var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(20) };
         timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
         timer.Start(); Dispatcher.PushFrame(frame);
+    }
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (var descendant in Descendants(child)) yield return descendant;
+        }
     }
 
     private static void Render(Window window, string path)

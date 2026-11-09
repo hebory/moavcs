@@ -149,20 +149,34 @@ public sealed class SettingsWindow : Window
     private readonly ICommandRunner _runner;
     private readonly CancellationTokenSource _cancellation = new();
     private readonly Button _check;
-    public SettingsWindow(AppSettings settings, SettingsStore store, ICommandRunner runner)
+    private readonly Action<Uri> _openDownload;
+    public SettingsWindow(AppSettings settings, SettingsStore store, ICommandRunner runner, Action<Uri>? openDownload = null)
     {
         _settings = settings; _store = store; _runner = runner;
+        _openDownload = openDownload ?? VcsTools.OpenDownload;
         Width = 700; Height = 820;
-        var panel = DialogLayout.Create(this, "도구 및 탐색기 설정", "MoaVCS는 설치된 각 VCS의 CLI를 사용합니다. 비워 두면 PATH에서 찾습니다. 로그인 정보는 각 도구에서 설정하세요.");
+        var panel = DialogLayout.Create(this, "도구 및 탐색기 설정", "각 도구의 다운로드 버튼으로 공식 배포 페이지를 여세요. 설치 후 ‘설치된 도구 확인’을 누르면 다시 찾습니다. 실행 경로를 비워 두면 PATH에서 검색합니다.");
         foreach (var choice in ProviderChoice.All)
         {
+            var tool = VcsTools.Get(choice.Kind);
             var label = new DockPanel { Margin = new Thickness(0, 10, 0, 6) };
-            var version = new TextBlock { FontSize = 11, Foreground = Brushes.SlateGray, HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 440, TextTrimming = TextTrimming.CharacterEllipsis };
+            var download = DialogLayout.Button("다운로드 ↗", (_, _) =>
+            {
+                try { _openDownload(tool.DownloadUrl); _notice.Text = tool.DownloadHint + " 설치가 끝나면 ‘설치된 도구 확인’을 눌러 주세요."; }
+                catch (Exception ex) { _notice.Text = "다운로드 페이지를 열지 못했습니다: " + ex.Message; }
+            });
+            download.Name = "Download" + choice.Kind;
+            download.Tag = choice.Kind;
+            download.ToolTip = tool.DownloadHint + "\n" + tool.DownloadUrl.AbsoluteUri;
+            download.Margin = new Thickness(10, 0, 0, 0);
+            download.Padding = new Thickness(10, 5, 10, 5);
+            DockPanel.SetDock(download, Dock.Right); label.Children.Add(download);
+            var version = new TextBlock { FontSize = 11, Foreground = Brushes.SlateGray, HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 300, TextTrimming = TextTrimming.CharacterEllipsis };
             DockPanel.SetDock(version, Dock.Right); label.Children.Add(version);
             label.Children.Add(new TextBlock { Text = choice.Label, FontWeight = FontWeights.SemiBold });
             panel.Children.Add(label);
             var row = new DockPanel();
-            var input = new TextBox { Text = settings.ExecutablePaths.GetValueOrDefault(choice.Kind, ""), ToolTip = "실행 파일 이름 또는 .exe 절대 경로 (명령 인수 제외)" };
+            var input = new TextBox { Text = settings.ExecutablePaths.GetValueOrDefault(choice.Kind, ""), Height = 36, ToolTip = "실행 파일 이름 또는 .exe 절대 경로 (명령 인수 제외)" };
             var browse = DialogLayout.Button("찾기", (_, _) =>
             {
                 var picker = new OpenFileDialog { Title = choice.Label + " 실행 파일 선택", Filter = "프로그램 (*.exe)|*.exe" };
@@ -193,14 +207,15 @@ public sealed class SettingsWindow : Window
         {
             foreach (var choice in ProviderChoice.All)
             {
-                var exe = _paths[choice.Kind].Text.Trim();
-                if (exe.Length == 0) exe = choice.Kind switch { VcsKind.Git => "git", VcsKind.Svn => "svn", VcsKind.Perforce => "p4", _ => "lore" };
+                var exe = VcsTools.ResolveExecutable(choice.Kind, _paths[choice.Kind].Text);
                 _versions[choice.Kind].Text = "확인 중…";
                 try
                 {
                     var result = await _runner.RunAsync(new CommandSpec(exe, [choice.Kind == VcsKind.Perforce ? "-V" : "--version"], Environment.CurrentDirectory, Timeout: TimeSpan.FromSeconds(12)), _cancellation.Token);
                     _versions[choice.Kind].Text = result.Success ? result.Output.Split('\n').FirstOrDefault()?.Trim() ?? "설치됨" : "실행 실패";
-                    _versions[choice.Kind].ToolTip = result.Output;
+                    _versions[choice.Kind].ToolTip = exe + "\n" + result.Output;
+                    if (result.Success && string.IsNullOrWhiteSpace(_paths[choice.Kind].Text) && Path.IsPathFullyQualified(exe))
+                        _paths[choice.Kind].Text = exe;
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex) { _versions[choice.Kind].Text = "설치 경로 확인 필요"; _versions[choice.Kind].ToolTip = ex.Message; }

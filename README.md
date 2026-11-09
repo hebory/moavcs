@@ -20,6 +20,12 @@ Windows 10 또는 11과 .NET 8 Desktop Runtime이 필요합니다. 빌드된 배
 
 검증은 .\scripts\verify.ps1로 실행합니다. 실제 Git 통합 테스트, 다른 VCS의 어댑터 fixture 테스트, 탐색기 명령 인용과 설정 저장, WPF 화면 렌더링 검사를 포함합니다. SVN·Perforce·Lore의 실제 서버 연결은 아직 검증하지 않았으며, Perforce changelist 제출은 현재 GUI에서 지원하지 않습니다.
 
+## VCS 도구 다운로드
+
+**도구 및 탐색기 설정**의 각 **다운로드 ↗** 버튼이 기본 브라우저에서 공식 배포 페이지를 엽니다. Git for Windows, Windows SVN CLI 배포판인 SlikSVN, Perforce P4 CLI, Epic Games Lore를 선택할 수 있습니다. 설치 후 **설치된 도구 확인 → 설정 저장**을 누르세요. 앱을 재시작하지 않아도 갱신된 사용자·시스템 PATH를 다시 읽습니다. 설치 경로가 PATH에 없으면 **찾기**로 실행 파일을 선택하세요.
+
+연결 주소: [Git](https://git-scm.com/install/windows), [SlikSVN](https://sliksvn.com/download/), [Perforce P4 CLI](https://www.perforce.com/downloads/helix-command-line-client-p4), [Epic Games Lore](https://github.com/EpicGames/lore/releases/latest). MoaVCS는 이 도구들의 설치 파일이나 계정 정보를 재배포·저장하지 않습니다.
+
 ## 탐색기 메뉴
 
 앱에서 **도구 및 탐색기 설정 → 메뉴 등록 / 갱신**을 선택하거나 아래 명령을 실행하면 현재 사용자 계정에 메뉴를 등록합니다. 관리자 권한은 필요하지 않습니다.
