@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>moavcs</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.1.0</Version>
+    <Description>One workspace for every version control system.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MoaVcs.Core\MoaVcs.Core.csproj" />
+  </ItemGroup>
+</Project>
