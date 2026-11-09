@@ -6,7 +6,7 @@ public sealed record LaunchOptions(string? Path, string Action = "open", VcsKind
     bool InstallContextMenu = false, bool UninstallContextMenu = false, bool Headless = false)
 {
     private static readonly HashSet<string> AllowedActions = new(StringComparer.OrdinalIgnoreCase)
-        { "open", "status", "diff", "log", "commit" };
+        { "open", "status", "diff", "blame", "log", "commit" };
 
     public static LaunchOptions Parse(string[] args)
     {

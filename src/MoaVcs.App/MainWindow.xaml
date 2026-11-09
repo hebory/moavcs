@@ -56,9 +56,16 @@
      </Grid>
      <Grid x:Name="RepositoryPanel" Visibility="Collapsed">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-      <Grid Margin="0,0,0,16"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <Grid Margin="0,0,0,16"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
        <StackPanel Orientation="Horizontal"><ComboBox x:Name="ProviderPicker" Width="125" SelectionChanged="ProviderPicker_SelectionChanged" ToolTip="사용할 버전 관리 시스템"/><TextBlock x:Name="RepositorySummary" Foreground="{StaticResource Muted}" FontSize="11" Margin="14,0,0,0" MaxWidth="250" TextTrimming="CharacterEllipsis"/></StackPanel>
        <StackPanel Grid.Column="1" Orientation="Horizontal"><Button x:Name="UpdateButton" Content="↓  가져오기" Click="Update_Click" Margin="0,0,8,0"/><Button x:Name="PushButton" Content="↑  보내기" Click="Push_Click" Margin="0,0,8,0"/><Button x:Name="RefreshButton" Content="↻  새로 고침" Click="Refresh_Click" ToolTip="F5"/></StackPanel>
+       <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,12,0,0">
+        <Button x:Name="FileDiffButton" Content="Diff 열기" Click="FileDiff_Click" Margin="0,0,8,0" ToolTip="선택 파일을 설정한 비교 도구로 열기. 우클릭으로 내장 도구 선택."><Button.ContextMenu><ContextMenu><MenuItem Header="내장 diff로 열기" Click="InternalDiff_Click"/></ContextMenu></Button.ContextMenu></Button>
+        <Button x:Name="FileBlameButton" Content="Blame 열기" Click="FileBlame_Click" Margin="0,0,16,0" ToolTip="선택 파일의 행별 이력. 우클릭으로 내장 도구 선택."><Button.ContextMenu><ContextMenu><MenuItem Header="내장 blame으로 열기" Click="InternalBlame_Click"/></ContextMenu></Button.ContextMenu></Button>
+        <Button x:Name="BrowseDiffButton" Content="파일 diff…" Click="BrowseDiff_Click" Margin="0,0,8,0" ToolTip="변경이 없는 저장소 파일도 선택할 수 있습니다."/>
+        <Button x:Name="BrowseBlameButton" Content="파일 blame…" Click="BrowseBlame_Click" Margin="0,0,12,0"/>
+        <TextBlock x:Name="FileToolsHint" Text="내장 도구 · 설정에서 외부 도구 선택" FontSize="11" Foreground="{StaticResource Muted}"/>
+       </StackPanel>
       </Grid>
       <Border Grid.Row="1" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8">
        <TabControl x:Name="MainTabs" BorderThickness="0" Background="Transparent" Padding="0" Margin="1" SelectionChanged="MainTabs_SelectionChanged">

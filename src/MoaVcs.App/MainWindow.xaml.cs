@@ -27,9 +27,11 @@ public partial class MainWindow : Window
     private bool _changingProvider;
     private bool _historyLoaded;
     private string? _selectedPath;
+    private readonly Action<Window>? _showInspection;
 
-    public MainWindow(LaunchOptions options, SettingsStore? settingsStore = null)
+    public MainWindow(LaunchOptions options, SettingsStore? settingsStore = null, Action<Window>? showInspection = null)
     {
+        _showInspection = showInspection;
         _settingsStore = settingsStore ?? new SettingsStore();
         _launchOptions = options;
         _settings = _settingsStore.Load();
@@ -144,6 +146,13 @@ public partial class MainWindow : Window
                     DiffTitle.Text = Path.GetFileName(selectedFile);
                     RenderDiff("선택한 파일에는 표시할 변경 내용이 없습니다.");
                 }
+                if (selectedFile is not null && action is "diff" or "blame")
+                {
+                    var relative = Path.GetRelativePath(_repository.RootPath, selectedFile).Replace('\\', '/');
+                    var target = _changes.FirstOrDefault(c => c.Path.Equals(relative, StringComparison.OrdinalIgnoreCase)) ?? new FileChange(relative, "Unchanged");
+                    await InspectFileAsync(action == "blame", target: target);
+                }
+                else if (action == "blame") ShowNotice("Blame은 파일 단위로 확인할 수 있습니다. ‘파일 blame…’에서 파일을 선택하세요.");
             }
         }
         catch (Exception ex) { ShowNotice(ex.Message); }
@@ -210,8 +219,93 @@ public partial class MainWindow : Window
         RefreshButton.IsEnabled = !_busy;
         ProviderPicker.IsEnabled = !_busy;
         CreateButton.IsEnabled = !_busy;
+        var singleFile = ChangesGrid.SelectedItems.Count == 1;
+        FileDiffButton.IsEnabled = Can(VcsCapabilities.Diff) && singleFile;
+        BrowseDiffButton.IsEnabled = Can(VcsCapabilities.Diff);
+        var canBlame = Can(VcsCapabilities.Blame) || (!_busy && _repository is not null &&
+            _settings.ExternalTools.GetValueOrDefault(ExternalToolKind.Blame) is { UseExternal: true } external &&
+            !ExternalToolLauncher.UsesPlaceholder(external, "blame"));
+        FileBlameButton.IsEnabled = canBlame && singleFile;
+        BrowseBlameButton.IsEnabled = canBlame;
+        FileToolsHint.Text = $"Diff: {ToolLabel(ExternalToolKind.Diff)} · Blame: {ToolLabel(ExternalToolKind.Blame)}";
         CancelButton.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    private string ToolLabel(ExternalToolKind kind) => _settings.ExternalTools.GetValueOrDefault(kind) is { UseExternal: true } ? "외부" : "내장";
+
+    private async Task InspectFileAsync(bool blame, bool browse = false, bool forceInternal = false, FileChange? target = null)
+    {
+        if (_busy || _provider is null || _repository is null) return;
+        var provider = _provider; var repository = _repository;
+        FileChange? file = target ?? (ChangesGrid.SelectedItems.Count == 1 ? ChangesGrid.SelectedItem as FileChange : null);
+        if (browse)
+        {
+            var picker = new OpenFileDialog { Title = blame ? "이력을 확인할 저장소 파일 선택" : "비교할 저장소 파일 선택", InitialDirectory = repository.RootPath, CheckFileExists = true };
+            if (picker.ShowDialog(this) != true) return;
+            var relative = Path.GetRelativePath(repository.RootPath, picker.FileName).Replace('\\', '/');
+            if (relative == ".." || relative.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+            { ShowNotice("현재 저장소 내부의 파일을 선택하세요."); return; }
+            file = _changes.FirstOrDefault(c => c.Path.Equals(relative, StringComparison.OrdinalIgnoreCase)) ?? new FileChange(relative, "Unchanged");
+        }
+        if (file is null) { ShowNotice("파일을 하나 선택하세요."); return; }
+        var selected = file;
+        var kind = blame ? ExternalToolKind.Blame : ExternalToolKind.Diff;
+        var tool = _settings.ExternalTools.GetValueOrDefault(kind);
+        var external = !forceInternal && tool is { UseExternal: true };
+        var staged = provider.Kind == VcsKind.Git && StagedDiffCheck.IsChecked == true;
+        Window? viewer = null;
+        await RunBusyAsync(blame ? "행별 이력을 불러오는 중…" : "파일을 비교하는 중…", async token =>
+        {
+            if (external) ExternalToolLauncher.Validate(tool!, kind);
+            if (blame)
+            {
+                BlameResult? result = null;
+                if (!external || ExternalToolLauncher.UsesPlaceholder(tool, "blame"))
+                    result = await provider.GetBlameAsync(repository.RootPath, selected, token);
+                if (external)
+                {
+                    token.ThrowIfCancellationRequested();
+                    using var process = ExternalToolLauncher.Launch(tool!, kind, new ExternalToolContext(repository.RootPath,
+                        Path.Combine(repository.RootPath, selected.Path), BlameText: result is null ? null : FileInspectionWindow.ExportBlame(result)));
+                    Log("외부 blame 도구를 열었습니다: " + selected.Path);
+                }
+                else viewer = new FileInspectionWindow(result!);
+            }
+            else
+            {
+                var needsPair = external ? ExternalToolLauncher.UsesPlaceholder(tool, "left") || ExternalToolLauncher.UsesPlaceholder(tool, "right") :
+                    provider.Capabilities.HasFlag(VcsCapabilities.FileComparison);
+                FileComparison? comparison = needsPair ? await provider.GetComparisonAsync(repository.RootPath, selected, staged, token) : null;
+                var patch = !external || ExternalToolLauncher.UsesPlaceholder(tool, "patch")
+                    ? await provider.GetDiffAsync(repository.RootPath, selected, staged, token) : null;
+                if (external)
+                {
+                    token.ThrowIfCancellationRequested();
+                    using var process = ExternalToolLauncher.Launch(tool!, kind, new ExternalToolContext(repository.RootPath,
+                        Path.Combine(repository.RootPath, selected.Path), comparison?.LeftText, comparison?.RightText, patch));
+                    Log("외부 diff 도구를 열었습니다: " + selected.Path);
+                }
+                else if (comparison is not null)
+                {
+                    var rows = await Task.Run(() => LineDiff.Compare(comparison.LeftText, comparison.RightText, token), token);
+                    viewer = new FileInspectionWindow(comparison, rows, patch!);
+                }
+                else viewer = new FileInspectionWindow(selected.Path, patch!);
+            }
+        });
+        if (viewer is not null)
+        {
+            if (_showInspection is not null) _showInspection(viewer);
+            else { viewer.Owner = this; viewer.Show(); }
+        }
+    }
+
+    private async void FileDiff_Click(object sender, RoutedEventArgs e) => await InspectFileAsync(false);
+    private async void FileBlame_Click(object sender, RoutedEventArgs e) => await InspectFileAsync(true);
+    private async void BrowseDiff_Click(object sender, RoutedEventArgs e) => await InspectFileAsync(false, browse: true);
+    private async void BrowseBlame_Click(object sender, RoutedEventArgs e) => await InspectFileAsync(true, browse: true);
+    private async void InternalDiff_Click(object sender, RoutedEventArgs e) => await InspectFileAsync(false, forceInternal: true);
+    private async void InternalBlame_Click(object sender, RoutedEventArgs e) => await InspectFileAsync(true, forceInternal: true);
 
     private async Task RunBusyAsync(string label, Func<CancellationToken, Task> operation)
     {

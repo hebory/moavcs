@@ -7,10 +7,21 @@ namespace MoaVcs.App.Services;
 
 public sealed record RecentRepository(string Path, VcsKind VcsKind);
 
+public enum ExternalToolKind { Diff, Blame }
+
+public sealed class ExternalToolSettings
+{
+    public bool UseExternal { get; set; }
+    public string ExecutablePath { get; set; } = "";
+    /// <summary>One argument template per entry. Entries are never parsed as shell command text.</summary>
+    public List<string> ArgumentTemplates { get; set; } = [];
+}
+
 public sealed class AppSettings
 {
     public List<RecentRepository> RecentRepositories { get; set; } = [];
     public Dictionary<VcsKind, string> ExecutablePaths { get; set; } = [];
+    public Dictionary<ExternalToolKind, ExternalToolSettings> ExternalTools { get; set; } = [];
 }
 
 /// <summary>Persists per-user preferences without requiring administrator access.</summary>
@@ -38,6 +49,17 @@ public sealed class SettingsStore
             if (loaded is null) throw new JsonException("설정 파일 내용이 비어 있습니다.");
             loaded.RecentRepositories ??= [];
             loaded.ExecutablePaths ??= [];
+            loaded.ExternalTools ??= [];
+            foreach (var kind in Enum.GetValues<ExternalToolKind>())
+            {
+                if (!loaded.ExternalTools.TryGetValue(kind, out var tool) || tool is null)
+                    loaded.ExternalTools[kind] = new ExternalToolSettings();
+                else
+                {
+                    tool.ExecutablePath ??= "";
+                    tool.ArgumentTemplates ??= [];
+                }
+            }
             loaded.RecentRepositories = loaded.RecentRepositories
                 .Where(r => r is not null && !string.IsNullOrWhiteSpace(r.Path))
                 .DistinctBy(r => Path.GetFullPath(r.Path), StringComparer.OrdinalIgnoreCase)

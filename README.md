@@ -28,6 +28,12 @@ Windows 10/11 x64용입니다. portable ZIP은 모두 압축 해제한 뒤 **moa
 
 연결 주소: [Git](https://git-scm.com/install/windows), [SlikSVN](https://sliksvn.com/download/), [Perforce P4 CLI](https://www.perforce.com/downloads/helix-command-line-client-p4), [Epic Games Lore](https://github.com/EpicGames/lore/releases/latest). MoaVCS는 이 도구들의 설치 파일이나 계정 정보를 재배포·저장하지 않습니다.
 
+## 내장 Diff · Blame과 외부 도구
+
+변경 파일을 선택하고 **Diff 열기**로 좌우 비교·변경 구간 이동·검색·패치 저장을 사용할 수 있습니다. **Blame 열기**는 기준 리비전의 행별 작성자·리비전·날짜를 표시합니다. 변경이 없는 파일은 **파일 diff… / 파일 blame…**로 선택하세요. Git의 **스테이지 비교**를 켜면 HEAD와 인덱스를 비교합니다.
+
+**도구 및 탐색기 설정 → Diff · Blame 도구**에서 각각 외부 프로그램의 실행 파일과 인수를 지정할 수 있습니다. 기본값은 내장 도구이며, 외부 도구를 설정해도 열기 버튼을 우클릭하면 내장 화면을 사용할 수 있습니다. 설정 예시와 VCS별 비교 기준은 [파일 도구 안내](docs/file-tools.md)를 참고하세요.
+
 ## 탐색기 메뉴
 
 앱에서 **도구 및 탐색기 설정 → 메뉴 등록 / 갱신**을 선택하거나 아래 명령을 실행하면 현재 사용자 계정에 메뉴를 등록합니다. 관리자 권한은 필요하지 않습니다.

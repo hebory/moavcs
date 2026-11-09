@@ -16,6 +16,8 @@ internal static class Program
             Console.WriteLine("PASS: SVN, Perforce and Lore adapter contracts");
             await ShellTests.RunAsync();
             Console.WriteLine("PASS: Explorer command quoting and settings persistence");
+            await ExternalToolTests.RunAsync();
+            Console.WriteLine("PASS: external tool process arguments, snapshots, cleanup and settings persistence");
             return 0;
         }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }

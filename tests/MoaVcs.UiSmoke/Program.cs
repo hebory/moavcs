@@ -29,7 +29,8 @@ internal static class Program
             Directory.CreateDirectory(_fixture);
             Git("init"); Git("config", "user.name", "MoaVCS UI test"); Git("config", "user.email", "test@example.invalid");
             File.WriteAllText(Path.Combine(_fixture, "README.md"), "# MoaVCS\n\nOne workspace for version control.\n");
-            Git("add", "README.md"); Git("commit", "-m", "Create workspace");
+            File.WriteAllText(Path.Combine(_fixture, "unchanged.txt"), "A committed file with no local changes.\n");
+            Git("add", "README.md", "unchanged.txt"); Git("commit", "-m", "Create workspace");
             File.AppendAllText(Path.Combine(_fixture, "README.md"), "\nGit, SVN, Perforce and Lore.\n");
             File.WriteAllText(Path.Combine(_fixture, "시작하기.txt"), "변경 파일을 선택하여 비교하세요.\n");
             var settings = new SettingsStore(Path.Combine(Environment.CurrentDirectory, ".local", "ui-smoke-settings.json"));
@@ -39,7 +40,8 @@ internal static class Program
             if (((TextBlock)window.FindName("RepoTitle")).Text != "작업 공간") throw new InvalidOperationException("Welcome title failed.");
             if (((Grid)window.FindName("RepositoryPanel")).Visibility != Visibility.Collapsed) throw new InvalidOperationException("Empty state failed.");
 
-            var repoWindow = new MainWindow(new LaunchOptions(_fixture), settings);
+            var inspections = new List<Window>();
+            var repoWindow = new MainWindow(new LaunchOptions(_fixture), settings, inspections.Add);
             repoWindow.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
             var deadline = DateTime.UtcNow.AddSeconds(20);
             while (((Grid)repoWindow.FindName("RepositoryPanel")).Visibility != Visibility.Visible && DateTime.UtcNow < deadline)
@@ -54,6 +56,30 @@ internal static class Program
             Render(repoWindow, Path.Combine(output, "workspace.png"));
             var grid = (DataGrid)repoWindow.FindName("ChangesGrid");
             if (grid.Items.Count != 2) throw new InvalidOperationException("Expected two fixture changes.");
+            grid.SelectedItem = grid.Items.Cast<MoaVcs.Core.FileChange>().Single(c => c.Path == "README.md");
+            ((Button)repoWindow.FindName("FileDiffButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            deadline = DateTime.UtcNow.AddSeconds(20);
+            while (inspections.Count < 1 && DateTime.UtcNow < deadline && ((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible) Pump();
+            if (inspections.Count != 1) throw new InvalidOperationException("Diff command did not open viewer: " + ((TextBlock)repoWindow.FindName("NoticeText")).Text);
+            var comparisonGrid = (DataGrid)inspections[0].FindName("ComparisonRows");
+            if (comparisonGrid.Items.Count != 5 || !comparisonGrid.Items.Cast<MoaVcs.Core.ComparisonRow>().Any(r => r.Kind == "added"))
+                throw new InvalidOperationException("Diff view must show committed and added lines.");
+            Render(inspections[0], Path.Combine(output, "diff.png"));
+            ((Button)repoWindow.FindName("FileBlameButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            deadline = DateTime.UtcNow.AddSeconds(20);
+            while (inspections.Count < 2 && DateTime.UtcNow < deadline && ((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible) Pump();
+            if (inspections.Count != 2) throw new InvalidOperationException("Blame command did not open viewer: " + ((TextBlock)repoWindow.FindName("NoticeText")).Text);
+            var blameGrid = (DataGrid)inspections[1].FindName("BlameRows");
+            if (blameGrid.Items.Count != 3 || blameGrid.Items.Cast<MoaVcs.Core.BlameLine>().Any(l => l.Author != "MoaVCS UI test"))
+                throw new InvalidOperationException("Blame must show the committed baseline and author.");
+            Render(inspections[1], Path.Combine(output, "blame.png"));
+            var shellInspections = new List<Window>();
+            var shellWindow = new MainWindow(new LaunchOptions(Path.Combine(_fixture, "unchanged.txt"), "blame"), settings, shellInspections.Add);
+            shellWindow.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            deadline = DateTime.UtcNow.AddSeconds(20);
+            while (shellInspections.Count == 0 && DateTime.UtcNow < deadline) Pump();
+            if (shellInspections.Count != 1 || ((DataGrid)shellInspections[0].FindName("BlameRows")).Items.Count != 1)
+                throw new InvalidOperationException("Explorer blame must open an unchanged file directly: " + ((TextBlock)shellWindow.FindName("NoticeText")).Text);
             ((TabControl)repoWindow.FindName("MainTabs")).SelectedItem = repoWindow.FindName("HistoryTab");
             deadline = DateTime.UtcNow.AddSeconds(20);
             while (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible && DateTime.UtcNow < deadline) Pump();
@@ -70,6 +96,11 @@ internal static class Program
                 if (opened[^1] != VcsTools.Get(kind).DownloadUrl) throw new InvalidOperationException("Wrong download URL for " + kind);
             }
             if (opened.Count != 4) throw new InvalidOperationException("All VCS download buttons must work.");
+            var toolOptions = Descendants((DependencyObject)settingsWindow.Content).OfType<CheckBox>().Where(c => Equals(c.Content, "외부 도구 사용")).ToList();
+            if (toolOptions.Count != 2 || toolOptions.Any(c => c.IsChecked == true)) throw new InvalidOperationException("Diff and blame must default to internal tools.");
+            ((ScrollViewer)settingsWindow.Content).ScrollToVerticalOffset(520);
+            Pump();
+            Render(settingsWindow, Path.Combine(output, "settings-file-tools.png"));
             var createWindow = new CreateRepositoryWindow(kind => kind switch
             {
                 MoaVcs.Core.VcsKind.Git => new MoaVcs.Core.Providers.GitProvider(new MoaVcs.Core.ProcessCommandRunner()),
@@ -78,7 +109,7 @@ internal static class Program
                 _ => new MoaVcs.Core.Providers.LoreProvider()
             });
             Render(createWindow, Path.Combine(output, "create.png"));
-            Console.WriteLine($"PASS: WPF welcome, repository, history, settings, downloads, create and layout rendering. {output}");
+            Console.WriteLine($"PASS: WPF welcome, repository, diff and blame commands, history, settings, downloads, create and layout rendering. {output}");
             app.Shutdown();
             return 0;
         }

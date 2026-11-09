@@ -16,6 +16,7 @@ public static class ExplorerIntegration
         ("Open", "moavcs 열기", "open", false),
         ("Status", "변경 사항 확인", "status", false),
         ("Diff", "변경 내용 비교", "diff", false),
+        ("Blame", "행별 이력 보기 (Blame)", "blame", false),
         ("Log", "변경 이력 보기", "log", false),
         ("Commit", "커밋", "commit", false)
     ];
@@ -44,6 +45,7 @@ public static class ExplorerIntegration
             values.Add(new(CommandRoot(scope), "MoaVcsOwner", Owner));
             foreach (var (id, label, action, _) in Verbs)
             {
+                if (action == "blame" && scope != "*") continue;
                 var verb = commands + "\\" + id;
                 values.Add(new(verb, "MUIVerb", label));
                 var commandPath = verb + "\\command";

@@ -143,6 +143,9 @@ public sealed class SettingsWindow : Window
 {
     private readonly Dictionary<VcsKind, TextBox> _paths = [];
     private readonly Dictionary<VcsKind, TextBlock> _versions = [];
+    private readonly Dictionary<ExternalToolKind, CheckBox> _externalEnabled = [];
+    private readonly Dictionary<ExternalToolKind, TextBox> _externalExecutables = [];
+    private readonly Dictionary<ExternalToolKind, TextBox> _externalArguments = [];
     private readonly TextBlock _notice = new() { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 10, 0, 6), MaxHeight = 70 };
     private readonly AppSettings _settings;
     private readonly SettingsStore _store;
@@ -187,6 +190,59 @@ public sealed class SettingsWindow : Window
         }
         _check = DialogLayout.Button("설치된 도구 확인", Check_Click);
         panel.Children.Add(_check);
+        panel.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromRgb(227, 231, 237)), Margin = new Thickness(0, 20, 0, 14) });
+        panel.Children.Add(new TextBlock { Text = "Diff · Blame 도구", FontSize = 16, FontWeight = FontWeights.SemiBold });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "기본값은 내장 화면입니다. 외부 도구를 사용하려면 실행 파일과 인수를 지정하세요. 인수는 한 줄에 하나씩 입력하며, 경로에 따옴표를 덧붙이지 않아도 됩니다.",
+            Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 7, 0, 8), LineHeight = 21
+        });
+        foreach (var kind in Enum.GetValues<ExternalToolKind>())
+        {
+            var config = settings.ExternalTools.GetValueOrDefault(kind) ?? new ExternalToolSettings();
+            var title = kind == ExternalToolKind.Diff ? "차이 보기 · Diff" : "작성 이력 · Blame";
+            DialogLayout.Label(panel, title);
+            var enabled = new CheckBox { Content = "외부 도구 사용", IsChecked = config.UseExternal, Margin = new Thickness(0, 0, 0, 8) };
+            panel.Children.Add(enabled);
+            panel.Children.Add(new TextBlock { Text = "실행 파일 (.exe)", FontSize = 11, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 0, 0, 5) });
+            var exeRow = new DockPanel();
+            var exe = new TextBox { Text = config.ExecutablePath, Height = 34, IsEnabled = config.UseExternal, ToolTip = "외부 프로그램 실행 파일의 절대 경로" };
+            var browseExe = DialogLayout.Button("찾기", (_, _) =>
+            {
+                var picker = new OpenFileDialog { Title = title + " 프로그램 선택", Filter = "프로그램 (*.exe)|*.exe" };
+                if (picker.ShowDialog(this) == true) exe.Text = picker.FileName;
+            });
+            browseExe.IsEnabled = config.UseExternal;
+            browseExe.Margin = new Thickness(10, 0, 0, 0); DockPanel.SetDock(browseExe, Dock.Right); exeRow.Children.Add(browseExe); exeRow.Children.Add(exe); panel.Children.Add(exeRow);
+            panel.Children.Add(new TextBlock { Text = "인수 (한 줄에 하나)", FontSize = 11, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 10, 0, 0) });
+            var args = new TextBox
+            {
+                Text = config.ArgumentTemplates.Count > 0 ? string.Join(Environment.NewLine, config.ArgumentTemplates) :
+                    kind == ExternalToolKind.Diff ? "{left}" + Environment.NewLine + "{right}" : "{blame}",
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.NoWrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Height = 82,
+                IsEnabled = config.UseExternal,
+                Margin = new Thickness(0, 7, 0, 0),
+                FontFamily = new FontFamily("Consolas")
+            };
+            args.ToolTip = kind == ExternalToolKind.Diff
+                ? "한 줄에 인수 하나. {left}+{right} 또는 {patch}가 필요합니다. {file}, {repo}도 사용할 수 있습니다."
+                : "한 줄에 인수 하나. {blame} 또는 {file}이 필요합니다. {blame}은 TSV 임시 파일 경로입니다. {repo}도 사용할 수 있습니다.";
+            panel.Children.Add(args);
+            panel.Children.Add(new TextBlock
+            {
+                Text = kind == ExternalToolKind.Diff
+                    ? "사용 가능: {left}, {right}는 비교 스냅샷, {patch}는 패치 스냅샷, {file}은 원본 파일, {repo}는 저장소 경로입니다."
+                    : "사용 가능: {blame}은 UTF-8 TSV 작성 이력 파일, {file}은 원본 파일, {repo}는 저장소 경로입니다.",
+                FontSize = 11, Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0)
+            });
+            enabled.Checked += (_, _) => { exe.IsEnabled = true; browseExe.IsEnabled = true; args.IsEnabled = true; };
+            enabled.Unchecked += (_, _) => { exe.IsEnabled = false; browseExe.IsEnabled = false; args.IsEnabled = false; };
+            _externalEnabled[kind] = enabled; _externalExecutables[kind] = exe; _externalArguments[kind] = args;
+        }
         panel.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromRgb(227, 231, 237)), Margin = new Thickness(0, 20, 0, 14) });
         panel.Children.Add(new TextBlock { Text = "탐색기 우클릭 메뉴", FontSize = 16, FontWeight = FontWeights.SemiBold });
         panel.Children.Add(new TextBlock { Text = "파일 · 폴더 · 폴더 배경에 MoaVCS 메뉴를 추가합니다.\nWindows 11에서는 ‘더 많은 옵션 표시’에 나타납니다.", Foreground = Brushes.SlateGray, Margin = new Thickness(0, 7, 0, 8), LineHeight = 21 });
@@ -238,9 +294,28 @@ public sealed class SettingsWindow : Window
     {
         try
         {
-            var updated = new AppSettings { RecentRepositories = _settings.RecentRepositories, ExecutablePaths = _paths.ToDictionary(pair => pair.Key, pair => pair.Value.Text.Trim()) };
+            var externalTools = new Dictionary<ExternalToolKind, ExternalToolSettings>();
+            foreach (var kind in Enum.GetValues<ExternalToolKind>())
+            {
+                var external = new ExternalToolSettings
+                {
+                    UseExternal = _externalEnabled[kind].IsChecked == true,
+                    ExecutablePath = _externalExecutables[kind].Text.Trim(),
+                    ArgumentTemplates = _externalArguments[kind].Text.Split('\n')
+                        .Select(line => line.TrimEnd('\r')).Where(line => line.Length > 0).ToList()
+                };
+                if (external.UseExternal) ExternalToolLauncher.Validate(external, kind);
+                externalTools[kind] = external;
+            }
+            var updated = new AppSettings
+            {
+                RecentRepositories = _settings.RecentRepositories,
+                ExecutablePaths = _paths.ToDictionary(pair => pair.Key, pair => pair.Value.Text.Trim()),
+                ExternalTools = externalTools
+            };
             _store.Save(updated);
             _settings.ExecutablePaths = updated.ExecutablePaths;
+            _settings.ExternalTools = updated.ExternalTools;
             DialogResult = true;
         }
         catch (Exception ex) { _notice.Text = ex.Message; }

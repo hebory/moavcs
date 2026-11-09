@@ -12,6 +12,7 @@ public static class ShellTests
         Check(LaunchOptions.Parse(["--path", @"C:\Work Area\repo", "--vcs", "git"]).Path == @"C:\Work Area\repo", "CLI paths retain spaces");
         Check(LaunchOptions.Parse(["--shell-path", @"C:\Work Area\repo\|"]).Path == @"C:\Work Area\repo\", "shell path sentinel is removed");
         Check(LaunchOptions.Parse(["--vcs", "Perforce", "--action", "diff"]).Action == "diff", "CLI parses provider and action");
+        Check(LaunchOptions.Parse(["--action", "blame"]).Action == "blame", "CLI accepts blame action");
         Throws<FormatException>(() => LaunchOptions.Parse(["--action", "delete-all"]), "unknown actions are rejected");
         Throws<FormatException>(() => LaunchOptions.Parse(["--vcs", "invented"]), "unknown providers are rejected");
         Throws<FormatException>(() => LaunchOptions.Parse(["--shell-path", @"C:\repo\"]), "shell path requires its sentinel");
@@ -27,6 +28,8 @@ public static class ShellTests
         Check(plan.Any(p => p.KeyPath.Contains(@"Directory\ContextMenus\MoaVcs.BackgroundCommands", StringComparison.Ordinal) && p.Value.Contains("%V", StringComparison.Ordinal)), "background commands use shell background path");
         Check(plan.Any(p => p.KeyPath.Contains(@"Directory\ContextMenus\MoaVcs.Commands\Shell\Diff\command", StringComparison.Ordinal) && p.Value.Contains("--action diff", StringComparison.Ordinal)), "diff command is registered");
         Check(plan.Any(p => p.Value.Contains("--action commit", StringComparison.Ordinal)), "commit command is registered");
+        Check(plan.Count(p => p.Value.Contains("--action blame", StringComparison.Ordinal)) == 1 &&
+            plan.Single(p => p.Value.Contains("--action blame", StringComparison.Ordinal)).KeyPath.Contains("MoaVcs.FileCommands", StringComparison.Ordinal), "blame is registered only for files");
         Check(plan.Where(p => p.Value.Contains("--shell-path", StringComparison.Ordinal)).All(p => p.Value.Contains("\"%1|\"", StringComparison.Ordinal) || p.Value.Contains("\"%V|\"", StringComparison.Ordinal)), "shell substitutions include a safe trailing sentinel");
         var dangerous = ExplorerIntegration.BuildRegistrationPlan(@"C:\repo & echo pwned\moavcs.exe").Last(p => p.Value.Contains("--action commit", StringComparison.Ordinal));
         Check(dangerous.Value.StartsWith("\"C:\\repo & echo pwned\\moavcs.exe\"", StringComparison.Ordinal), "metacharacters stay inside quoted executable name");

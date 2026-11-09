@@ -20,6 +20,16 @@ public partial class App : Application
                 Shutdown(0);
                 return;
             }
+            // Keep snapshot copies long enough for external tools that launch a child process.
+            try
+            {
+                SnapshotStore.CleanupExpired();
+                foreach (var warning in SnapshotStore.LastCleanupWarnings) System.Diagnostics.Trace.TraceWarning(warning);
+            }
+            catch (Exception cleanupError) when (cleanupError is System.IO.IOException or UnauthorizedAccessException)
+            {
+                System.Diagnostics.Trace.TraceWarning(cleanupError.Message);
+            }
             var window = new MainWindow(options);
             MainWindow = window;
             window.Show();
