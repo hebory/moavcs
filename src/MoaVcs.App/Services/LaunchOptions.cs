@@ -3,7 +3,7 @@ using MoaVcs.Core;
 namespace MoaVcs.App.Services;
 
 public sealed record LaunchOptions(string? Path, string Action = "open", VcsKind? Vcs = null,
-    bool InstallContextMenu = false, bool UninstallContextMenu = false)
+    bool InstallContextMenu = false, bool UninstallContextMenu = false, bool Headless = false)
 {
     private static readonly HashSet<string> AllowedActions = new(StringComparer.OrdinalIgnoreCase)
         { "open", "status", "diff", "log", "commit" };
@@ -14,10 +14,11 @@ public sealed record LaunchOptions(string? Path, string Action = "open", VcsKind
         string? path = null;
         string action = "open";
         VcsKind? vcs = null;
-        bool install = false, uninstall = false;
+        bool install = false, uninstall = false, headless = false;
         for (var i = 0; i < args.Length; i++)
         {
             var token = args[i];
+            if (token.Equals("--headless", StringComparison.OrdinalIgnoreCase)) { headless = true; continue; }
             if (token.Equals("--install-context-menu", StringComparison.OrdinalIgnoreCase)) { install = true; continue; }
             if (token.Equals("--uninstall-context-menu", StringComparison.OrdinalIgnoreCase)) { uninstall = true; continue; }
             if (token is not ("--path" or "--shell-path" or "--action" or "--vcs"))
@@ -46,6 +47,8 @@ public sealed record LaunchOptions(string? Path, string Action = "open", VcsKind
             }
         }
         if (install && uninstall) throw new FormatException("탐색기 메뉴 설치와 제거를 동시에 실행할 수 없습니다.");
-        return new LaunchOptions(path, action, vcs, install, uninstall);
+        if (headless && (!install && !uninstall || path is not null || action != "open" || vcs is not null))
+            throw new FormatException("--headless는 탐색기 메뉴 등록 또는 제거 작업에만 사용할 수 있습니다.");
+        return new LaunchOptions(path, action, vcs, install, uninstall, headless);
     }
 }

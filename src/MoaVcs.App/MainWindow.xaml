@@ -22,7 +22,7 @@
     <StackPanel Grid.Row="3">
      <Border Background="#213247" CornerRadius="8" Padding="14" Margin="0,0,0,18"><StackPanel><TextBlock Text="한곳에 모으다." Foreground="#E4EAF1" FontWeight="SemiBold"/><TextBlock Text="Git · SVN · Perforce · Lore" Foreground="#8296B0" FontSize="11" Margin="0,7,0,0"/></StackPanel></Border>
      <Button Style="{StaticResource NavButton}" Click="Settings_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" Margin="0,0,12,0"/><TextBlock Text="도구 및 탐색기 설정"/></StackPanel></Button>
-     <TextBlock Text="MoaVCS  /  0.1.0" Foreground="#5F738D" FontSize="10" Margin="13,14,0,0"/>
+     <TextBlock x:Name="VersionText" Text="MoaVCS" Foreground="#5F738D" FontSize="10" Margin="13,14,0,0"/>
     </StackPanel>
    </Grid>
   </Border>

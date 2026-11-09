@@ -16,6 +16,10 @@ public static class ShellTests
         Throws<FormatException>(() => LaunchOptions.Parse(["--vcs", "invented"]), "unknown providers are rejected");
         Throws<FormatException>(() => LaunchOptions.Parse(["--shell-path", @"C:\repo\"]), "shell path requires its sentinel");
         Throws<FormatException>(() => LaunchOptions.Parse(["--install-context-menu", "--uninstall-context-menu"]), "conflicting install flags are rejected");
+        Check(LaunchOptions.Parse(["--install-context-menu", "--headless"]).Headless, "installer can register without opening a GUI");
+        Check(LaunchOptions.Parse(["--uninstall-context-menu", "--headless"]).UninstallContextMenu, "uninstaller can unregister without opening a GUI");
+        Throws<FormatException>(() => LaunchOptions.Parse(["--headless"]), "headless mode requires an explicit shell operation");
+        Throws<FormatException>(() => LaunchOptions.Parse(["--install-context-menu", "--headless", "--path", @"C:\repo"]), "installer mode cannot open a repository");
 
         Check(ExplorerIntegration.QuoteArgument(@"C:\Program Files\moavcs\moavcs.exe") == @"""C:\Program Files\moavcs\moavcs.exe""", "quoted executable paths");
         Check(ExplorerIntegration.QuoteArgument(@"C:\moavcs\moavcs.exe") == @"C:\moavcs\moavcs.exe", "simple executable paths");

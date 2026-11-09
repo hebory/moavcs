@@ -46,6 +46,7 @@ internal static class Program
                 Pump();
             while (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible && DateTime.UtcNow < deadline)
                 Pump();
+            if (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible) throw new TimeoutException("Repository load did not finish.");
             var notice = ((TextBlock)repoWindow.FindName("NoticeText")).Text;
             if (((Grid)repoWindow.FindName("RepositoryPanel")).Visibility != Visibility.Visible) throw new InvalidOperationException("Repository did not load: " + notice);
             if (!string.IsNullOrWhiteSpace(notice)) throw new InvalidOperationException("Repository error: " + notice);
@@ -54,8 +55,10 @@ internal static class Program
             var grid = (DataGrid)repoWindow.FindName("ChangesGrid");
             if (grid.Items.Count != 2) throw new InvalidOperationException("Expected two fixture changes.");
             ((TabControl)repoWindow.FindName("MainTabs")).SelectedItem = repoWindow.FindName("HistoryTab");
+            deadline = DateTime.UtcNow.AddSeconds(20);
             while (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible && DateTime.UtcNow < deadline) Pump();
-            if (((TextBlock)repoWindow.FindName("HistoryHint")).Text.Length == 0) throw new InvalidOperationException("History view did not load.");
+            if (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible) throw new TimeoutException("History load did not finish.");
+            if (((DataGrid)repoWindow.FindName("HistoryGrid")).Items.Count != 1) throw new InvalidOperationException("History view did not load the fixture commit.");
             // Settings dialog initialization and layout must not install registry keys.
             var opened = new List<Uri>();
             var settingsWindow = new SettingsWindow(new AppSettings(), settings, new MoaVcs.Core.ProcessCommandRunner(), opened.Add);

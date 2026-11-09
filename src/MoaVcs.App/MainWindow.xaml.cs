@@ -34,6 +34,7 @@ public partial class MainWindow : Window
         _launchOptions = options;
         _settings = _settingsStore.Load();
         InitializeComponent();
+        VersionText.Text = "MoaVCS  /  " + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "0.1.0");
         _changingProvider = true;
         ProviderPicker.ItemsSource = ProviderChoice.All;
         _changingProvider = false;

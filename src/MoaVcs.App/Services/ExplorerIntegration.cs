@@ -118,24 +118,31 @@ public static class ExplorerIntegration
         }
     }
 
-    public static void Uninstall() => UninstallOwnedKeys();
+    public static void Uninstall(string? expectedExecutable = null) => UninstallOwnedKeys(expectedExecutable);
 
-    private static void UninstallOwnedKeys()
+    private static void UninstallOwnedKeys(string? expectedExecutable = null)
     {
-        foreach (var scope in Scopes)
+        var scopes = Scopes.Where(scope => expectedExecutable is null || CommandTargetsExecutable(scope, expectedExecutable)).ToArray();
+        foreach (var scope in scopes)
         {
             var path = MenuPath(scope);
             using var key = Registry.CurrentUser.OpenSubKey(path, writable: false);
             if (string.Equals(key?.GetValue("MoaVcsOwner") as string, Owner, StringComparison.Ordinal))
                 Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false);
         }
-        foreach (var scope in Scopes)
+        foreach (var scope in scopes)
         {
             var root = CommandRoot(scope);
             using var owned = Registry.CurrentUser.OpenSubKey(root, writable: false);
             if (string.Equals(owned?.GetValue("MoaVcsOwner") as string, Owner, StringComparison.Ordinal))
                 Registry.CurrentUser.DeleteSubKeyTree(root, throwOnMissingSubKey: false);
         }
+    }
+
+    private static bool CommandTargetsExecutable(string scope, string executable)
+    {
+        using var command = Registry.CurrentUser.OpenSubKey(CommandRoot(scope) + "\\Shell\\Open\\command");
+        return command?.GetValue("") is string value && value.StartsWith(QuoteArgument(Path.GetFullPath(executable)) + " ", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string MenuPath(string scope) => $"Software\\Classes\\{scope}\\shell\\{MenuName}";
