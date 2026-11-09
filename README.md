@@ -6,7 +6,9 @@ Git, Subversion, Perforce, Epic Games Lore를 한 화면에서 다루는 Windows
 
 ## 실행
 
-Windows 10 또는 11과 .NET 8 Desktop Runtime이 필요합니다. 빌드된 배포 폴더에서는 **moavcs.exe**를 실행하세요. 이 작업 공간에서는 **artifacts\win-x64\moavcs.exe**에 실행 파일이 있습니다. exe와 같은 폴더의 DLL·JSON 파일을 함께 보관해야 합니다.
+[GitHub Releases](https://github.com/hebory/moavcs/releases/latest)에서 **moavcs-버전-win-x64-setup.exe**를 내려받아 설치하세요. 설치 파일과 portable ZIP에는 .NET 런타임이 포함되어 있습니다. 현재 사용자 계정에 설치하며, 탐색기 메뉴 등록은 설치 과정에서 선택할 수 있습니다. VCS CLI는 앱의 다운로드 버튼을 통해 별도로 설치합니다.
+
+Windows 10/11 x64용입니다. portable ZIP은 모두 압축 해제한 뒤 **moavcs.exe**를 실행하세요. exe와 같은 폴더의 DLL·JSON 파일을 함께 보관해야 합니다.
 
 소스에서 실행하려면 .NET 8 SDK를 설치하고, 저장소 루트에서 PowerShell을 열고 실행합니다.
 
@@ -16,7 +18,7 @@ Windows 10 또는 11과 .NET 8 Desktop Runtime이 필요합니다. 빌드된 배
 
     .\scripts\run.ps1 -AppArguments @("--path", "C:\Work Area\repo")
 
-배포 디렉터리는 .\scripts\publish.ps1로 만듭니다. 기본 출력은 artifacts\win-x64이며 .NET 8 Desktop Runtime 설치가 필요합니다. 런타임을 포함하려면 -SelfContained를 추가합니다. 런타임을 포함하는 빌드는 관련 패키지 다운로드가 필요할 수 있습니다.
+앱만 게시하려면 .\scripts\publish.ps1을 사용합니다. 기본 출력은 artifacts\publish\win-x64이며 .NET 8 Desktop Runtime 설치가 필요합니다. -SelfContained를 추가하면 런타임을 포함합니다. 설치 파일과 ZIP·체크섬은 .\scripts\package.ps1로 만들며 Inno Setup 컴파일러가 필요합니다. 자동 생성 절차는 [릴리스 안내](docs/releases.md)를 참고하세요.
 
 검증은 .\scripts\verify.ps1로 실행합니다. 실제 Git 통합 테스트, 다른 VCS의 어댑터 fixture 테스트, 탐색기 명령 인용과 설정 저장, WPF 화면 렌더링 검사를 포함합니다. SVN·Perforce·Lore의 실제 서버 연결은 아직 검증하지 않았으며, Perforce changelist 제출은 현재 GUI에서 지원하지 않습니다.
 
@@ -30,8 +32,8 @@ Windows 10 또는 11과 .NET 8 Desktop Runtime이 필요합니다. 빌드된 배
 
 앱에서 **도구 및 탐색기 설정 → 메뉴 등록 / 갱신**을 선택하거나 아래 명령을 실행하면 현재 사용자 계정에 메뉴를 등록합니다. 관리자 권한은 필요하지 않습니다.
 
-    .\artifacts\win-x64\moavcs.exe --install-context-menu
-    .\artifacts\win-x64\moavcs.exe --uninstall-context-menu
+    .\artifacts\publish\win-x64\moavcs.exe --install-context-menu
+    .\artifacts\publish\win-x64\moavcs.exe --uninstall-context-menu
 
 폴더, 폴더 배경과 파일 메뉴에 moavcs 하위 메뉴가 추가됩니다. Windows 11은 고전 Win32 탐색기 메뉴를 **더 많은 옵션 표시** 아래에 보여줄 수 있습니다. 자세한 내용은 [탐색기 메뉴 안내](docs/explorer-integration.md)를 참고하세요.
 

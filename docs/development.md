@@ -25,5 +25,8 @@ tests\MoaVcs.Tests는 실제 Git 임시 저장소 통합 테스트, 프로세스
 - --vcs Git|Svn|Perforce|Lore: 감지된 유형 대신 명시적인 유형 선택
 - --action open|status|diff|log|commit: 탐색기 메뉴 작업
 - --install-context-menu 및 --uninstall-context-menu: 현재 사용자 셸 메뉴 등록 관리
+- --headless: 위 메뉴 등록·제거 명령을 설치 프로그램에서 창 없이 실행하고 종료. 실패 시 종료 코드 1과 %LOCALAPPDATA%\MoaVcs\setup-error.log를 남깁니다.
+
+작업 단계마다 관련 검증 후 한글 메시지로 커밋하고 현재 원격 브랜치에 푸시합니다. `master`와 `codex/**` 브랜치의 푸시 및 pull request는 Windows CI 검증을 실행합니다. 설치 파일 배포는 [릴리스 안내](releases.md)를 따릅니다.
 
 공통 어댑터는 UI가 특정 CLI의 출력 형식과 저장소별 동작을 직접 알지 않도록 나눕니다. 추가 제공자를 구현할 때에는 각 기능이 정확히 가능한 경우에만 해당 기능을 표시하고, 선택하지 않은 파일을 커밋하거나 되돌리는 동작을 추가하지 마세요.

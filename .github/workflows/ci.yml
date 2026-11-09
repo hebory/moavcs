@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - "codex/**"
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and verify
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 8.0.x
+      - name: Run verification
+        shell: pwsh
+        run: ./scripts/verify.ps1 -Configuration Release
+      - name: Ensure Inno Setup Compiler is available
+        shell: pwsh
+        run: |
+          $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          if ($null -eq $iscc) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Chocolatey could not install Inno Setup." }
+          }
+      - name: Build installer and portable archive
+        shell: pwsh
+        run: ./scripts/package.ps1
+      - name: Smoke test per-user install and uninstall
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content src/MoaVcs.App/MoaVcs.App.csproj -Raw
+          $version = $project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
+          ./scripts/test-installer.ps1 -InstallerPath "artifacts/release/moavcs-$version-win-x64-setup.exe"
