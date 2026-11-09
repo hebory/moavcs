@@ -1,0 +1,8 @@
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Width="512" Height="512" Background="Transparent">
+  <Border Margin="24" Background="#E45F3C" CornerRadius="136">
+    <TextBlock Text="m" FontFamily="Segoe UI" FontWeight="Bold" FontSize="352"
+               Foreground="White" HorizontalAlignment="Center"
+               VerticalAlignment="Center" Margin="0,-112,0,0"/>
+  </Border>
+</Border>

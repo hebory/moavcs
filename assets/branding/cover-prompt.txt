@@ -1,0 +1,10 @@
+Mode: Built-in image_gen; new image generation; opaque background.
+Use case: ads-marketing
+Asset type: MoaVCS application cover for Moa Launcher, landscape 16:9, requested 1792 x 1008 or nearest landscape format.
+Primary request: Create a polished editorial software cover for MoaVCS, a Windows desktop app that brings Git, SVN, Perforce and Lore version control into one workspace.
+Scene/backdrop: Deep ink navy #172434, subtle tonal gradient, precise warm orange #E45F3C accents, soft ivory type. Clean, calm, premium developer-tool identity.
+Subject: A sculptural branching commit graph made of smooth orange and warm ivory paths and circular nodes, several branches flowing together into one central hub. Elegant restrained depth, clean curves, soft studio shadows. This is abstract branding, not a screenshot or UI mockup.
+Composition/framing: Wide cover. Left side contains large readable product title and subtitle with generous breathing room; right side contains the abstract commit graph. All content inside a generous 8% safe margin, readable at thumbnail size. Balanced negative space, graphic editorial composition.
+Text (verbatim): "moaVCS" as the large title, "Git · SVN · Perforce · Lore" below it. No other text.
+Typography: Clean contemporary sans serif, bold lowercase moa and uppercase VCS, excellent spacing. Title in warm white; small subtitle in muted blue gray.
+Constraints: No third-party logos, no UI windows, no code blocks, no extra copy, no watermark, no border. Opaque background. Do not include a separate app icon: the product title and branching sculpture are sufficient.

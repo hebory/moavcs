@@ -37,6 +37,10 @@ Windows 10/11 x64용입니다. portable ZIP은 모두 압축 해제한 뒤 **moa
 
 폴더, 폴더 배경과 파일 메뉴에 moavcs 하위 메뉴가 추가됩니다. Windows 11은 고전 Win32 탐색기 메뉴를 **더 많은 옵션 표시** 아래에 보여줄 수 있습니다. 자세한 내용은 [탐색기 메뉴 안내](docs/explorer-integration.md)를 참고하세요.
 
+## Moa Launcher 이미지
+
+런처 목록용 [icon.png](icon.png)와 상세 화면용 [cover.png](cover.png)를 제공합니다. Moa Launcher의 **설정 → 카탈로그 가져오기**에서 [moalauncher.json](moalauncher.json)을 가져오면 이미지와 GitHub Release 설치 파일이 연결된 MoaVCS 항목을 추가할 수 있습니다. [등록 방법과 이미지 원본](docs/branding.md)을 참고하세요.
+
 ## 구성
 
 - src/MoaVcs.Core: 공통 VCS 모델, 프로세스 실행, 저장소 제공자
