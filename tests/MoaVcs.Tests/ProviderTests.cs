@@ -214,8 +214,8 @@ public static class ProviderTests
         Equal("status", runner.Commands[0].Arguments[2]);
         True(changes[0].IsStaged, "Lore staged status must remain distinct from worktree status.");
         True((provider.Capabilities & VcsCapabilities.Commit) != 0, "Lore exposes commit for its staged revision.");
-        True((provider.Capabilities & VcsCapabilities.FileComparison) == 0, "Lore patch diff is not presented as two recoverable file snapshots.");
-        True((provider.Capabilities & VcsCapabilities.Blame) == 0, "Lore audit output has no stable machine-readable row format in the CLI reference.");
+        True((provider.Capabilities & VcsCapabilities.FileComparison) != 0, "Lore exposes committed and working file snapshots.");
+        True((provider.Capabilities & VcsCapabilities.Blame) != 0, "Lore provides revision-pinned JSON audit attribution.");
     }
 
     private static async Task LoreRejectsUnrecognizedStatus()

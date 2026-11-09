@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace MoaVcs.Core.Providers;
 
 /// <summary>Adapter for Epic Games Lore's CLI.</summary>
-public sealed class LoreProvider : IVcsProvider
+public sealed partial class LoreProvider : IVcsProvider
 {
     private readonly ICommandRunner _runner;
     public LoreProvider(ICommandRunner? runner = null, string executable = "lore")
@@ -14,7 +14,7 @@ public sealed class LoreProvider : IVcsProvider
     public string Executable { get; }
     public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage |
         VcsCapabilities.Unstage | VcsCapabilities.Commit | VcsCapabilities.Update | VcsCapabilities.Push |
-        VcsCapabilities.Initialize | VcsCapabilities.Clone;
+        VcsCapabilities.Initialize | VcsCapabilities.Clone | VcsCapabilities.FileComparison | VcsCapabilities.Blame;
 
     public async Task<RepositoryInfo> GetRepositoryAsync(string path, CancellationToken cancellationToken = default)
     {

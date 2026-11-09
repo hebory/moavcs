@@ -12,6 +12,8 @@ namespace MoaVcs.UiSmoke;
 internal static class Program
 {
     private static string? _fixture;
+    private static string? _loreFixture;
+    private static string? _loreSettingsFile;
     [STAThread]
     private static int Main()
     {
@@ -109,6 +111,15 @@ internal static class Program
                 _ => new MoaVcs.Core.Providers.LoreProvider()
             });
             Render(createWindow, Path.Combine(output, "create.png"));
+            var loreExecutable = Environment.GetEnvironmentVariable("MOAVCS_LORE_EXE");
+            if (string.IsNullOrWhiteSpace(loreExecutable))
+            {
+                Console.WriteLine("SKIP: Lore UI smoke (MOAVCS_LORE_EXE is not set).");
+            }
+            else
+            {
+                RunLoreInspectionSmoke(loreExecutable, output);
+            }
             Console.WriteLine($"PASS: WPF welcome, repository, diff and blame commands, history, settings, downloads, create and layout rendering. {output}");
             app.Shutdown();
             return 0;
@@ -116,14 +127,101 @@ internal static class Program
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
         finally
         {
-            var allowed = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, ".local")) + Path.DirectorySeparatorChar;
-            if (_fixture is not null && Path.GetFullPath(_fixture).StartsWith(allowed, StringComparison.OrdinalIgnoreCase) && Directory.Exists(_fixture))
-            {
-                foreach (var file in Directory.EnumerateFiles(_fixture, "*", SearchOption.AllDirectories))
-                    File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
-                Directory.Delete(_fixture, recursive: true);
-            }
+            DeleteSmokePath(_fixture);
+            DeleteSmokePath(_loreFixture);
+            if (_loreSettingsFile is not null && IsInsideLocal(_loreSettingsFile) && File.Exists(_loreSettingsFile))
+                File.Delete(_loreSettingsFile);
         }
+    }
+
+    private static void RunLoreInspectionSmoke(string loreExecutable, string output)
+    {
+        loreExecutable = Path.GetFullPath(loreExecutable.Trim());
+        if (!File.Exists(loreExecutable)) throw new FileNotFoundException("MOAVCS_LORE_EXE must name the Lore executable.", loreExecutable);
+
+        var scratch = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, ".local"));
+        Directory.CreateDirectory(scratch);
+        _loreFixture = Path.Combine(scratch, "ui-lore-fixture-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_loreFixture);
+        _loreSettingsFile = Path.Combine(scratch, "ui-lore-settings-" + Guid.NewGuid().ToString("N") + ".json");
+
+        const string identity = "moavcs-ui-smoke@example.invalid";
+        RunLore(loreExecutable, _loreFixture,
+            "--repository", _loreFixture, "--offline", "--identity", identity, "repository", "create");
+
+        const string sourceName = "Lore UI sample.txt";
+        var sourcePath = Path.Combine(_loreFixture, sourceName);
+        File.WriteAllText(sourcePath, "Lore baseline line\nstable line\nthird line\n", new System.Text.UTF8Encoding(false));
+        RunLore(loreExecutable, _loreFixture, "--repository", _loreFixture, "stage", "--scan", "--", sourceName);
+        RunLore(loreExecutable, _loreFixture,
+            "--repository", _loreFixture, "--offline", "--identity", identity, "commit", "--", "Create Lore UI baseline");
+        File.WriteAllText(sourcePath, "Lore changed line\nstable line\nthird line\nLore added line\n", new System.Text.UTF8Encoding(false));
+
+        var settingsStore = new SettingsStore(_loreSettingsFile);
+        settingsStore.Save(new AppSettings
+        {
+            ExecutablePaths = new Dictionary<MoaVcs.Core.VcsKind, string>
+            {
+                [MoaVcs.Core.VcsKind.Lore] = loreExecutable
+            }
+        });
+
+        var inspections = new List<Window>();
+        var window = new MainWindow(new LaunchOptions(_loreFixture), settingsStore, inspections.Add);
+        window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        var deadline = DateTime.UtcNow.AddSeconds(45);
+        while (((Grid)window.FindName("RepositoryPanel")).Visibility != Visibility.Visible && DateTime.UtcNow < deadline) Pump();
+        while (((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible && DateTime.UtcNow < deadline) Pump();
+        if (((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible) throw new TimeoutException("Lore repository load did not finish.");
+        var notice = ((TextBlock)window.FindName("NoticeText")).Text;
+        if (((Grid)window.FindName("RepositoryPanel")).Visibility != Visibility.Visible || !string.IsNullOrWhiteSpace(notice))
+            throw new InvalidOperationException("Lore repository did not load: " + notice);
+
+        var changes = (DataGrid)window.FindName("ChangesGrid");
+        var changed = changes.Items.Cast<MoaVcs.Core.FileChange>().SingleOrDefault(change => change.Path == sourceName);
+        if (changed is null) throw new InvalidOperationException("Lore status did not detect the modified fixture file.");
+        changes.SelectedItem = changed;
+
+        ((Button)window.FindName("FileDiffButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        deadline = DateTime.UtcNow.AddSeconds(45);
+        while (inspections.Count < 1 && DateTime.UtcNow < deadline) Pump();
+        if (inspections.Count < 1) throw new InvalidOperationException("Lore compare did not open an inspection window: " + ((TextBlock)window.FindName("NoticeText")).Text);
+        var comparison = (DataGrid)inspections[0].FindName("ComparisonRows");
+        var comparisonRows = comparison.Items.Cast<MoaVcs.Core.ComparisonRow>().ToArray();
+        if (!comparisonRows.Any(row => row.Kind == "modified" && row.LeftText == "Lore baseline line" && row.RightText == "Lore changed line") ||
+            !comparisonRows.Any(row => row.Kind == "added" && row.RightText == "Lore added line"))
+            throw new InvalidOperationException("Lore compare did not show the committed baseline against the modified working file.");
+        Render(inspections[0], Path.Combine(output, "lore-diff.png"));
+
+        ((Button)window.FindName("FileBlameButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        deadline = DateTime.UtcNow.AddSeconds(45);
+        while (inspections.Count < 2 && DateTime.UtcNow < deadline) Pump();
+        if (inspections.Count < 2) throw new InvalidOperationException("Lore blame did not open an inspection window: " + ((TextBlock)window.FindName("NoticeText")).Text);
+        var blame = (DataGrid)inspections[1].FindName("BlameRows");
+        var blameRows = blame.Items.Cast<MoaVcs.Core.BlameLine>().ToArray();
+        if (blameRows.Length != 3 || blameRows.Any(line => line.Author != identity || line.Revision.Length != 64) ||
+            blameRows[0].Text != "Lore baseline line")
+            throw new InvalidOperationException("Lore blame did not show the committed lines with their recorded author and revision.");
+        Render(inspections[1], Path.Combine(output, "lore-blame.png"));
+        Console.WriteLine($"PASS: Lore CLI {RunLore(loreExecutable, _loreFixture, "--version").Trim()} compare and blame smoke; {output}");
+    }
+
+    private static string RunLore(string executable, string workingDirectory, params string[] arguments) =>
+        new MoaVcs.Core.ProcessCommandRunner().RunAsync(new MoaVcs.Core.CommandSpec(
+            executable, arguments, workingDirectory, Timeout: TimeSpan.FromSeconds(45))).GetAwaiter().GetResult().EnsureSuccess().StandardOutput;
+
+    private static bool IsInsideLocal(string path)
+    {
+        var allowed = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, ".local")) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(path).StartsWith(allowed, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void DeleteSmokePath(string? path)
+    {
+        if (path is null || !IsInsideLocal(path) || !Directory.Exists(path)) return;
+        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
+        Directory.Delete(path, recursive: true);
     }
 
     private static void Git(params string[] arguments) => new MoaVcs.Core.ProcessCommandRunner()
