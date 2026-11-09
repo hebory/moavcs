@@ -20,7 +20,7 @@ Windows 10/11 x64용입니다. portable ZIP은 모두 압축 해제한 뒤 **moa
 
 앱만 게시하려면 .\scripts\publish.ps1을 사용합니다. 기본 출력은 artifacts\publish\win-x64이며 .NET 8 Desktop Runtime 설치가 필요합니다. -SelfContained를 추가하면 런타임을 포함합니다. 설치 파일과 ZIP·체크섬은 .\scripts\package.ps1로 만들며 Inno Setup 컴파일러가 필요합니다. 자동 생성 절차는 [릴리스 안내](docs/releases.md)를 참고하세요.
 
-검증은 .\scripts\verify.ps1로 실행합니다. 실제 Git 통합 테스트, 다른 VCS의 어댑터 fixture 테스트, 탐색기 명령 인용과 설정 저장, WPF 화면 렌더링 검사를 포함합니다. SVN·Perforce·Lore의 실제 서버 연결은 아직 검증하지 않았으며, Perforce changelist 제출은 현재 GUI에서 지원하지 않습니다.
+검증은 .\scripts\verify.ps1로 실행합니다. 실제 Git 통합 테스트, VCS 어댑터 fixture 테스트, 탐색기 명령 인용과 설정 저장, WPF 화면 렌더링 검사를 포함합니다. Lore 0.13.0의 로컬 통합·화면 검사는 `MOAVCS_LORE_EXE`를 지정하면 실행되며 CI와 릴리스에서는 항상 실행합니다. 준비 방법은 [로컬 개발](docs/development.md)을 참고하세요. SVN·Perforce·Lore의 실제 서버 연결은 아직 검증하지 않았으며, Perforce changelist 제출은 현재 GUI에서 지원하지 않습니다.
 
 ## VCS 도구 다운로드
 
@@ -31,6 +31,8 @@ Windows 10/11 x64용입니다. portable ZIP은 모두 압축 해제한 뒤 **moa
 ## 내장 Diff · Blame과 외부 도구
 
 변경 파일을 선택하고 **Diff 열기**로 좌우 비교·변경 구간 이동·검색·패치 저장을 사용할 수 있습니다. **Blame 열기**는 기준 리비전의 행별 작성자·리비전·날짜를 표시합니다. 변경이 없는 파일은 **파일 diff… / 파일 blame…**로 선택하세요. Git의 **스테이지 비교**를 켜면 HEAD와 인덱스를 비교합니다.
+
+Lore 0.13.0 이상에서도 내장 좌우 diff와 Blame을 사용할 수 있습니다. 현재 커밋과 작업 파일을 비교하고, 커밋된 줄의 작성자 identity·리비전·날짜를 표시합니다. 추가·삭제·스테이지된 이름 변경을 지원합니다.
 
 **도구 및 탐색기 설정 → Diff · Blame 도구**에서 각각 외부 프로그램의 실행 파일과 인수를 지정할 수 있습니다. 기본값은 내장 도구이며, 외부 도구를 설정해도 열기 버튼을 우클릭하면 내장 화면을 사용할 수 있습니다. 설정 예시와 VCS별 비교 기준은 [파일 도구 안내](docs/file-tools.md)를 참고하세요.
 

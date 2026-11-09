@@ -19,11 +19,20 @@ tests\MoaVcs.Tests는 실제 Git 임시 저장소 통합 테스트, 프로세스
 
 검증은 사용자 저장소를 변경하거나 탐색기 메뉴를 등록하지 않습니다. 임시 저장소는 .local 안에서 생성하고 정리합니다. WPF 렌더링 검사는 실제 탐색기에서 클릭하는 수동 검증을 대신하지 않습니다.
 
+Lore의 실제 CLI 통합·WPF 검사는 아래처럼 실행합니다. 준비 스크립트는 공식 Windows x64 Lore 0.13.0 ZIP을 `.local/test-tools`에 내려받고 고정된 SHA-256을 검증합니다. 시스템 설치나 PATH 변경 없이 테스트에서만 사용합니다. CI와 릴리스에서도 같은 절차를 실행합니다.
+
+```powershell
+$env:MOAVCS_LORE_EXE = .\scripts\get-test-lore.ps1
+.\scripts\verify.ps1
+```
+
+환경 변수가 없으면 실제 Lore 검사는 `SKIP`으로 표시하고 fixture 검사는 실행합니다. 잘못된 경로가 지정되면 실패합니다. 코어의 Lore 검사만 실행하려면 `dotnet run --project tests/MoaVcs.Tests -- --lore`를 사용하세요. 실제 검사는 오프라인 임시 저장소와 명시적인 테스트 identity를 사용하며 원격 서버 인증을 검증하지 않습니다.
+
 ## CLI 인자
 
 - --path <폴더 또는 파일>: 열 경로
 - --vcs Git|Svn|Perforce|Lore: 감지된 유형 대신 명시적인 유형 선택
-- --action open|status|diff|log|commit: 탐색기 메뉴 작업
+- --action open|status|diff|blame|log|commit: 탐색기 메뉴 작업
 - --install-context-menu 및 --uninstall-context-menu: 현재 사용자 셸 메뉴 등록 관리
 - --headless: 위 메뉴 등록·제거 명령을 설치 프로그램에서 창 없이 실행하고 종료. 실패 시 종료 코드 1과 %LOCALAPPDATA%\MoaVcs\setup-error.log를 남깁니다.
 

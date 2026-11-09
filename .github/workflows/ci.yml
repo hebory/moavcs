@@ -26,6 +26,11 @@ jobs:
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 8.0.x
+      - name: Prepare verified Lore CLI for integration tests
+        shell: pwsh
+        run: |
+          $lore = ./scripts/get-test-lore.ps1
+          "MOAVCS_LORE_EXE=$lore" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Run verification
         shell: pwsh
         run: ./scripts/verify.ps1 -Configuration Release

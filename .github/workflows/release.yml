@@ -40,6 +40,10 @@ jobs:
             choco install innosetup --yes --no-progress
             if ($LASTEXITCODE -ne 0) { throw "Chocolatey could not install Inno Setup." }
           }
+      - name: Prepare verified Lore CLI for integration tests
+        run: |
+          $lore = ./scripts/get-test-lore.ps1
+          "MOAVCS_LORE_EXE=$lore" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Verify release source
         run: ./scripts/verify.ps1 -Configuration Release
       - name: Build installer, portable archive, and checksums
