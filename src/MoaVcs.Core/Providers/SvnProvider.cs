@@ -12,7 +12,7 @@ public sealed class SvnProvider : IVcsProvider
     public VcsKind Kind => VcsKind.Svn;
     public string Name => "Subversion";
     public string Executable { get; }
-    public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage | VcsCapabilities.Commit | VcsCapabilities.Update | VcsCapabilities.Clone;
+    public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage | VcsCapabilities.Commit | VcsCapabilities.Update | VcsCapabilities.Clone | VcsCapabilities.FileComparison | VcsCapabilities.Blame;
 
     public async Task<RepositoryInfo> GetRepositoryAsync(string path, CancellationToken cancellationToken = default)
     {
@@ -60,6 +60,70 @@ public sealed class SvnProvider : IVcsProvider
         if (file is not null) { args.Add("--"); args.Add(EscapePegPath(ResolveSelected(root, file.Path))); }
         var result = await Run(args, root, cancellationToken);
         return result.StandardOutput;
+    }
+
+    public async Task<FileComparison> GetComparisonAsync(string root, FileChange file, bool staged = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        root = Path.GetFullPath(root);
+        var fullPath = ResolveSelected(root, file.Path);
+        var isNew = file.Status is "unversioned" or "added";
+        string? baseline = null;
+        if (!isNew)
+        {
+            var result = await Run(["cat", "--revision", "BASE", "--", EscapePegPath(fullPath)], root, cancellationToken);
+            baseline = TextSnapshot.ValidateText(result.StandardOutput, file.Path);
+        }
+
+        var working = File.Exists(fullPath)
+            ? await TextSnapshot.ReadFileAsync(fullPath, file.Path, cancellationToken)
+            : null;
+
+        return new FileComparison(file.Path,
+            baseline is null ? "SVN BASE (파일 없음)" : "SVN BASE",
+            working is null ? "작업 복사본 (삭제됨)" : "작업 복사본",
+            baseline ?? string.Empty, working ?? string.Empty);
+    }
+
+    public async Task<BlameResult> GetBlameAsync(string root, FileChange file,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        root = Path.GetFullPath(root);
+        var fullPath = ResolveSelected(root, file.Path);
+        if (file.Status is "unversioned" or "added" or "deleted" or "missing")
+            throw new VcsException("SVN 작성자 이력은 현재 작업 복사본의 BASE에 존재하는 파일만 표시할 수 있습니다.");
+
+        var baseResult = await Run(["cat", "--revision", "BASE", "--", EscapePegPath(fullPath)], root, cancellationToken);
+        var content = TextSnapshot.ValidateText(baseResult.StandardOutput, file.Path);
+        if (CountLines(content) > LineDiff.MaxLines)
+            throw new VcsException($"'{file.Path}'은 {LineDiff.MaxLines:N0}줄을 초과하여 작성자 이력을 표시할 수 없습니다.");
+        var sourceLines = SplitLines(content);
+        var blameResult = await Run(["blame", "--xml", "--revision", "BASE", "--", EscapePegPath(fullPath)], root, cancellationToken);
+        var xml = XDocument.Parse(blameResult.StandardOutput);
+        var entries = xml.Descendants("entry").ToArray();
+        if (entries.Length != sourceLines.Count)
+            throw new VcsException("SVN blame 메타데이터의 줄 수와 BASE 파일 내용이 일치하지 않습니다.");
+
+        var linesByNumber = new BlameLine[sourceLines.Count];
+        foreach (var entry in entries)
+        {
+            var lineNumberText = (string?)entry.Attribute("line-number");
+            if (!int.TryParse(lineNumberText, out var lineNumber) || lineNumber < 1 || lineNumber > sourceLines.Count)
+                throw new VcsException("SVN blame XML의 줄 번호 형식을 인식할 수 없습니다.");
+            if (linesByNumber[lineNumber - 1] is not null)
+                throw new VcsException("SVN blame XML에 중복 줄 번호가 있습니다.");
+            var commit = entry.Element("commit");
+            var revision = (string?)commit?.Attribute("revision")
+                ?? throw new VcsException("SVN blame XML에 커밋 리비전이 없습니다.");
+            linesByNumber[lineNumber - 1] = new BlameLine(lineNumber, revision,
+                commit!.Element("author")?.Value ?? string.Empty,
+                commit!.Element("date")?.Value ?? string.Empty,
+                sourceLines[lineNumber - 1]);
+        }
+        if (linesByNumber.Any(line => line is null)) throw new VcsException("SVN blame XML에 일부 줄 정보가 없습니다.");
+        return new BlameResult(file.Path, "SVN BASE", linesByNumber);
     }
 
     public async Task<IReadOnlyList<HistoryEntry>> GetHistoryAsync(string root, CancellationToken cancellationToken = default)
@@ -123,6 +187,30 @@ public sealed class SvnProvider : IVcsProvider
     }
 
     private static string EscapePegPath(string path) => path + "@";
+
+    private static IReadOnlyList<string> SplitLines(string text)
+    {
+        if (text.Length == 0) return [];
+        var lines = System.Text.RegularExpressions.Regex.Split(text, "\\r\\n|\\n|\\r").ToList();
+        if (text.EndsWith('\n') || text.EndsWith('\r')) lines.RemoveAt(lines.Count - 1);
+        return lines;
+    }
+
+    private static int CountLines(string text)
+    {
+        if (text.Length == 0) return 0;
+        var count = 1;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\r')
+            {
+                count++;
+                if (i + 1 < text.Length && text[i + 1] == '\n') i++;
+            }
+            else if (text[i] == '\n') count++;
+        }
+        return text[^1] is '\r' or '\n' ? count - 1 : count;
+    }
 
     private static bool IsWithin(string root, string path)
     {

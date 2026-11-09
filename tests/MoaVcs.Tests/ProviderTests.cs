@@ -9,7 +9,11 @@ public static class ProviderTests
     public static async Task RunAsync()
     {
         await SvnUsesXmlAndScopesCommit();
+        await SvnComparisonAndBlameUseBaseContent();
+        await SvnBlameRejectsTooManyLines();
         await PerforceUsesConfiguredWorkspaceAndTaggedRecords();
+        await PerforceComparisonAndBlameUseHaveRevision();
+        await PerforcePinsNumericRevisionAndBoundsBlame();
         await PerforceRejectsUnrecognizedStatus();
         await LoreUsesDocumentedTextFormatsAndRepositoryMarker();
         await LoreRejectsUnrecognizedStatus();
@@ -53,6 +57,48 @@ public static class ProviderTests
         True((provider.Capabilities & VcsCapabilities.Unstage) == 0, "SVN has no index-based unstage operation.");
     }
 
+    private static async Task SvnComparisonAndBlameUseBaseContent()
+    {
+        using var temp = new TempDirectory();
+        var path = Path.Combine(temp.Path, "source.txt");
+        File.WriteAllText(path, "working line\n", new System.Text.UTF8Encoding(false));
+        var blameXml = "<blame><target path=\"source.txt\">" +
+            "<entry line-number=\"1\"><commit revision=\"12\"><author>dev</author><date>2026-11-10T00:00:00Z</date></commit></entry>" +
+            "</target></blame>";
+        var runner = new FakeRunner(Ok("base line\n"), Ok("base line\n"), Ok(blameXml));
+        var provider = new SvnProvider(runner);
+        var file = new FileChange("source.txt", "modified");
+
+        var comparison = await provider.GetComparisonAsync(temp.Path, file);
+        Equal("base line\n", comparison.LeftText);
+        Equal("working line\n", comparison.RightText);
+        Contains(runner.Commands[0].Arguments, "BASE");
+        Equal("cat", runner.Commands[0].Arguments[1]);
+
+        var blame = await provider.GetBlameAsync(temp.Path, file);
+        Equal(1, blame.Lines.Count);
+        Equal("12", blame.Lines[0].Revision);
+        Equal("dev", blame.Lines[0].Author);
+        Equal("base line", blame.Lines[0].Text);
+        Equal("blame", runner.Commands[2].Arguments[1]);
+        True((provider.Capabilities & VcsCapabilities.FileComparison) != 0, "SVN provides working-copy vs BASE snapshots.");
+        True((provider.Capabilities & VcsCapabilities.Blame) != 0, "SVN provides XML blame for tracked text files.");
+    }
+
+    private static async Task SvnBlameRejectsTooManyLines()
+    {
+        using var temp = new TempDirectory();
+        var tooManyLines = string.Concat(Enumerable.Repeat("x\n", LineDiff.MaxLines + 1));
+        var runner = new FakeRunner(Ok(tooManyLines));
+        try
+        {
+            await new SvnProvider(runner).GetBlameAsync(temp.Path, new FileChange("source.txt", "modified"));
+            throw new InvalidOperationException("SVN blame should enforce the shared line cap.");
+        }
+        catch (VcsException ex) when (ex.Message.Contains(LineDiff.MaxLines.ToString("N0"), StringComparison.Ordinal)) { }
+        Equal(1, runner.Commands.Count);
+    }
+
     private static async Task PerforceUsesConfiguredWorkspaceAndTaggedRecords()
     {
         using var temp = new TempDirectory();
@@ -76,6 +122,62 @@ public static class ProviderTests
         var diffRunner = new FakeRunner(Ok("diff"));
         await new PerforceProvider(diffRunner).GetDiffAsync(temp.Path, new FileChange("source.txt", "edit"));
         Contains(diffRunner.Commands[0].Arguments, "-f");
+    }
+
+    private static async Task PerforceComparisonAndBlameUseHaveRevision()
+    {
+        using var temp = new TempDirectory();
+        var path = Path.Combine(temp.Path, "source.txt");
+        File.WriteAllText(path, "  local line\n", new System.Text.UTF8Encoding(false));
+        var fstat = "... depotFile //depot/source.txt\n... clientFile " + path +
+            "\n... path " + path + "\n... haveRev 7\n... headType text\n";
+        var runner = new FakeRunner(
+            Ok(fstat), Ok("  base line\n"),
+            Ok(fstat), Ok("  base line\n"), Ok("1: dev 2026/11/10      base line\n"));
+        var provider = new PerforceProvider(runner);
+        var file = new FileChange("source.txt", "edit");
+
+        var comparison = await provider.GetComparisonAsync(temp.Path, file);
+        Equal("  base line\n", comparison.LeftText);
+        Equal("  local line\n", comparison.RightText);
+        Contains(runner.Commands[1].Arguments, "//depot/source.txt#7");
+        Contains(runner.Commands[1].Arguments, "-q");
+
+        var blame = await provider.GetBlameAsync(temp.Path, file);
+        Equal(1, blame.Lines.Count);
+        Equal("1", blame.Lines[0].Revision);
+        Equal("dev", blame.Lines[0].Author);
+        Equal("  base line", blame.Lines[0].Text);
+        Contains(runner.Commands[^1].Arguments, "//depot/source.txt#7");
+        True((provider.Capabilities & VcsCapabilities.FileComparison) != 0, "P4 maps each selected workspace file to its #have revision.");
+        True((provider.Capabilities & VcsCapabilities.Blame) != 0, "P4 annotate provides revision, author, and date for text lines.");
+    }
+
+    private static async Task PerforcePinsNumericRevisionAndBoundsBlame()
+    {
+        using var temp = new TempDirectory();
+        var path = Path.Combine(temp.Path, "source.txt");
+        var fstat = "... depotFile //depot/source.txt\n... clientFile " + path +
+            "\n... path " + path + "\n... haveRev 7\n... headType text\n";
+        var tooManyLines = string.Concat(Enumerable.Repeat("x\n", LineDiff.MaxLines + 1));
+        var runner = new FakeRunner(Ok(fstat), Ok(tooManyLines));
+        try
+        {
+            await new PerforceProvider(runner).GetBlameAsync(temp.Path, new FileChange("source.txt", "edit"));
+            throw new InvalidOperationException("Perforce blame should enforce the shared line cap.");
+        }
+        catch (VcsException ex) when (ex.Message.Contains(LineDiff.MaxLines.ToString("N0"), StringComparison.Ordinal)) { }
+        Equal(2, runner.Commands.Count);
+        Contains(runner.Commands[1].Arguments, "//depot/source.txt#7");
+
+        var invalidRevisionRunner = new FakeRunner(Ok(fstat.Replace("haveRev 7", "haveRev unknown", StringComparison.Ordinal)));
+        try
+        {
+            await new PerforceProvider(invalidRevisionRunner).GetBlameAsync(temp.Path, new FileChange("source.txt", "edit"));
+            throw new InvalidOperationException("Perforce blame must reject a nonnumeric synced revision.");
+        }
+        catch (VcsException ex) when (ex.Message.Contains("numeric", StringComparison.Ordinal)) { }
+        Equal(1, invalidRevisionRunner.Commands.Count);
     }
 
     private static async Task PerforceRejectsUnrecognizedStatus()
@@ -112,6 +214,8 @@ public static class ProviderTests
         Equal("status", runner.Commands[0].Arguments[2]);
         True(changes[0].IsStaged, "Lore staged status must remain distinct from worktree status.");
         True((provider.Capabilities & VcsCapabilities.Commit) != 0, "Lore exposes commit for its staged revision.");
+        True((provider.Capabilities & VcsCapabilities.FileComparison) == 0, "Lore patch diff is not presented as two recoverable file snapshots.");
+        True((provider.Capabilities & VcsCapabilities.Blame) == 0, "Lore audit output has no stable machine-readable row format in the CLI reference.");
     }
 
     private static async Task LoreRejectsUnrecognizedStatus()

@@ -15,4 +15,17 @@ Git은 인덱스(staging area)에 파일을 올린 뒤, 이미 인덱스에 들�
 
 현재 포함하지 않는 기능: 충돌 해결 편집기, 브랜치 생성·전환 UI, Perforce changelist 제출, 파일 상태 오버레이 아이콘, Windows 11 최상위 현대식 메뉴용 COM/MSIX 확장. 기존 CLI의 인증 설정을 사용하며 GUI 로그인·비밀번호 저장은 제공하지 않습니다.
 
-명령 기준: [Git 문서](https://git-scm.com/docs), [SVN 명령 참조](https://svnbook.red-bean.com/en/1.8/svn.ref.html), [Perforce 명령 참조](https://help.perforce.com/helix-core/server-apps/cmdref/current/Content/CmdRef/Home-cmdref.html), [Epic Lore CLI](https://epicgames.github.io/lore/reference/lore-cli-commands/).
+## 파일 비교와 Blame
+
+| 시스템 | 내장 좌우 비교 | 내장 Blame 기준 |
+|---|---|---|
+| Git | 인덱스 → 작업 트리, 스테이지 비교 시 HEAD → 인덱스 | HEAD에 커밋된 파일. 스테이지된 이름 변경은 이전 경로의 이력 |
+| SVN | BASE → 작업 복사본 | 작업 복사본의 BASE |
+| Perforce | 마지막 동기화 리비전 → 작업 공간 | 마지막 동기화한 파일 리비전 |
+| Lore | 통합 패치 화면 제공, 좌우 비교 미지원 | 미지원 |
+
+텍스트 스냅샷은 UTF-8 파일당 1 MiB, 좌우 비교와 blame은 50,000줄까지 지원합니다. 바이너리·다른 인코딩·지원 범위를 벗어나는 파일은 이유를 표시하며 내용이나 이력을 추측하지 않습니다. Blame에는 아직 커밋하지 않은 작업 내용이 포함되지 않습니다. 충돌 중인 Git 인덱스의 좌우 비교는 지원하지 않습니다.
+
+외부 diff 도구에는 두 텍스트 스냅샷 또는 통합 패치를, 외부 blame 도구에는 이력 TSV 또는 원본 파일 경로를 전달할 수 있습니다. Lore는 패치 인수를 받는 외부 diff나 자체 VCS 기능이 있는 외부 blame 도구를 사용하세요.
+
+명령 기준: [Git 문서](https://git-scm.com/docs), [SVN blame 참조](https://svnbook.red-bean.com/en/1.8/svn.ref.svn.c.blame.html), [Perforce annotate 참조](https://help.perforce.com/helix-core/server-apps/cmdref/current/Content/CmdRef/p4_annotate.html), [Epic Lore CLI](https://epicgames.github.io/lore/reference/lore-cli-commands/).

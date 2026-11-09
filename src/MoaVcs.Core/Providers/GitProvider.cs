@@ -5,12 +5,15 @@ namespace MoaVcs.Core.Providers;
 /// <summary>Git adapter built on the official git executable.</summary>
 public sealed class GitProvider(ICommandRunner runner, string executable = "git") : IVcsProvider
 {
+    public const long MaxTextSnapshotBytes = TextSnapshot.MaxBytes;
+    public const int MaxBlameLines = 50_000;
+
     public VcsKind Kind => VcsKind.Git;
     public string Name => "Git";
     public string Executable => executable;
     public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage |
         VcsCapabilities.Unstage | VcsCapabilities.Commit | VcsCapabilities.Update | VcsCapabilities.Push |
-        VcsCapabilities.Initialize | VcsCapabilities.Clone;
+        VcsCapabilities.Initialize | VcsCapabilities.Clone | VcsCapabilities.FileComparison | VcsCapabilities.Blame;
 
     public async Task<RepositoryInfo> GetRepositoryAsync(string path, CancellationToken cancellationToken = default)
     {
@@ -82,6 +85,78 @@ public sealed class GitProvider(ICommandRunner runner, string executable = "git"
         if (staged) args.Add("--cached");
         args.AddRange(["--no-ext-diff", "--no-textconv", "--no-color", "--", safePath]);
         return (await Run(root, args, cancellationToken).ConfigureAwait(false)).EnsureSuccess().StandardOutput;
+    }
+
+    public async Task<FileComparison> GetComparisonAsync(string root, FileChange file, bool staged = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        root = NormalizeRoot(root);
+        var path = ValidateRelativePath(root, file.Path);
+        string? left;
+        string? right;
+        string leftLabel;
+        string rightLabel;
+
+        if (staged)
+        {
+            // For an index rename, HEAD still stores the old name while the index stores the new one.
+            var headPath = file.IndexStatus == "R" && file.OriginalPath is not null
+                ? ValidateRelativePath(root, file.OriginalPath)
+                : path;
+            left = await ReadHeadTextAsync(root, headPath, cancellationToken).ConfigureAwait(false);
+            right = await ReadIndexTextAsync(root, path, cancellationToken).ConfigureAwait(false);
+            leftLabel = left is null ? "HEAD (파일 없음)" : "HEAD";
+            rightLabel = right is null ? "인덱스 (삭제됨)" : "인덱스";
+        }
+        else
+        {
+            // For an unstaged worktree rename, compare the old index entry with the new worktree path.
+            var indexPath = file.WorkTreeStatus == "R" && file.OriginalPath is not null
+                ? ValidateRelativePath(root, file.OriginalPath)
+                : path;
+            left = await ReadIndexTextAsync(root, indexPath, cancellationToken).ConfigureAwait(false);
+            right = await ReadWorkTreeTextAsync(root, path, cancellationToken).ConfigureAwait(false);
+            leftLabel = left is null ? "인덱스 (파일 없음)" : "인덱스";
+            rightLabel = right is null ? "작업 트리 (삭제됨)" : "작업 트리";
+        }
+
+        return new FileComparison(file.Path, leftLabel, rightLabel, left ?? string.Empty, right ?? string.Empty);
+    }
+
+    public async Task<BlameResult> GetBlameAsync(string root, FileChange file,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        root = NormalizeRoot(root);
+        var path = ValidateRelativePath(root, file.Path);
+        // Blame is intentionally anchored to committed HEAD. A staged rename's old name is the committed path.
+        if (file.IndexStatus == "R" && file.OriginalPath is not null)
+            path = ValidateRelativePath(root, file.OriginalPath);
+
+        var head = await Run(root, ["rev-parse", "--verify", "HEAD"], cancellationToken).ConfigureAwait(false);
+        if (!head.Success)
+            throw new VcsException("작성자 이력을 보려면 먼저 저장소에 첫 커밋이 필요합니다.");
+        var revision = head.StandardOutput.Trim();
+        var content = await ReadCommitTextAsync(root, revision, path, cancellationToken).ConfigureAwait(false);
+        if (content is null)
+            throw new VcsException("선택한 파일은 현재 커밋에 없어 작성자 이력을 표시할 수 없습니다.");
+        var expectedLines = CountTextLines(content);
+        if (expectedLines > MaxBlameLines)
+            throw new VcsException($"파일이 {MaxBlameLines:N0}줄을 초과하여 작성자 이력을 표시할 수 없습니다.");
+
+        var blame = await Run(root,
+            ["--literal-pathspecs", "--no-pager", "blame", "--line-porcelain", "--encoding=UTF-8", revision, "--", path],
+            cancellationToken).ConfigureAwait(false);
+        if (!blame.Success)
+            throw new VcsException($"Git 작성자 이력을 읽지 못했습니다.{Environment.NewLine}{blame.Output}");
+
+        var lines = ParseBlame(blame.StandardOutput);
+        if (lines.Count != expectedLines || lines.Where((line, index) => line.LineNumber != index + 1).Any())
+            throw new VcsException("Git 작성자 이력의 줄 수가 파일 내용과 일치하지 않습니다.");
+        var shortRevision = await Run(root, ["rev-parse", "--short", revision], cancellationToken).ConfigureAwait(false);
+        var label = shortRevision.Success ? $"HEAD ({shortRevision.StandardOutput.Trim()})" : "HEAD";
+        return new BlameResult(file.Path, label, lines);
     }
 
     public async Task<IReadOnlyList<HistoryEntry>> GetHistoryAsync(string root, CancellationToken cancellationToken = default)
@@ -172,6 +247,112 @@ public sealed class GitProvider(ICommandRunner runner, string executable = "git"
         if (!File.Exists(fullPath)) return result.StandardOutput;
         return result.StandardOutput.Replace("a/./" + safePath, "a/" + safePath, StringComparison.Ordinal)
             .Replace("b/./" + safePath, "b/" + safePath, StringComparison.Ordinal);
+    }
+
+    private async Task<string?> ReadWorkTreeTextAsync(string root, string path, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var safePath = ValidateRelativePath(root, path);
+        var fullPath = Path.Combine(root, safePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(fullPath))
+        {
+            if (Directory.Exists(fullPath)) throw new VcsException("폴더 전체를 텍스트로 비교할 수 없습니다. 파일을 선택하세요.");
+            return null;
+        }
+        var info = new FileInfo(fullPath);
+        TextSnapshot.EnsureWithinLimit(info.Length, safePath);
+        try { return await TextSnapshot.ReadFileAsync(fullPath, safePath, cancellationToken).ConfigureAwait(false); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
+
+    private async Task<string?> ReadIndexTextAsync(string root, string path, CancellationToken cancellationToken)
+    {
+        var safePath = ValidateRelativePath(root, path);
+        var listing = await Run(root,
+            ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", safePath], cancellationToken).ConfigureAwait(false);
+        listing.EnsureSuccess();
+        var records = listing.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (records.Length == 0) return null;
+        var fields = records[0].Split('\t', 2)[0].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length < 3 || fields[2] != "0" || records.Length != 1)
+            throw new VcsException($"'{safePath}' 파일은 인덱스 충돌 상태여서 비교할 수 없습니다.");
+        var objectId = fields[1];
+        return await ReadBlobTextAsync(root, objectId, safePath, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string?> ReadHeadTextAsync(string root, string path, CancellationToken cancellationToken)
+    {
+        var head = await Run(root, ["rev-parse", "--verify", "HEAD"], cancellationToken).ConfigureAwait(false);
+        if (!head.Success) return null;
+        return await ReadCommitTextAsync(root, head.StandardOutput.Trim(), path, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string?> ReadCommitTextAsync(string root, string revision, string path, CancellationToken cancellationToken)
+    {
+        var safePath = ValidateRelativePath(root, path);
+        var objectSpec = $"{revision}:{safePath}";
+        var exists = await Run(root, ["cat-file", "-e", objectSpec], cancellationToken).ConfigureAwait(false);
+        if (!exists.Success) return null;
+        return await ReadBlobTextAsync(root, objectSpec, safePath, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> ReadBlobTextAsync(string root, string objectSpec, string path, CancellationToken cancellationToken)
+    {
+        var sizeResult = await Run(root, ["cat-file", "-s", objectSpec], cancellationToken).ConfigureAwait(false);
+        sizeResult.EnsureSuccess();
+        if (!long.TryParse(sizeResult.StandardOutput.Trim(), out var size) || size < 0)
+            throw new VcsException($"Git에서 '{path}' 파일 크기를 확인하지 못했습니다.");
+        TextSnapshot.EnsureWithinLimit(size, path);
+
+        var blob = (await Run(root, ["cat-file", "blob", objectSpec], cancellationToken).ConfigureAwait(false)).EnsureSuccess();
+        return TextSnapshot.ValidateText(blob.StandardOutput, path);
+    }
+
+    private static IReadOnlyList<BlameLine> ParseBlame(string output)
+    {
+        var source = output.Split('\n');
+        var result = new List<BlameLine>();
+        for (var i = 0; i < source.Length;)
+        {
+            var header = source[i].TrimEnd('\r').Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (header.Length < 3 || header[0].Length < 7 ||
+                !int.TryParse(header[1], out _) || !int.TryParse(header[2], out var finalLine))
+            {
+                i++;
+                continue;
+            }
+
+            var revision = header[0];
+            var author = string.Empty;
+            var date = string.Empty;
+            i++;
+            while (i < source.Length && !source[i].StartsWith('\t'))
+            {
+                var metadata = source[i].TrimEnd('\r');
+                if (metadata.StartsWith("author ", StringComparison.Ordinal)) author = metadata[7..];
+                else if (metadata.StartsWith("author-time ", StringComparison.Ordinal) &&
+                         long.TryParse(metadata[12..], out var unixTime))
+                {
+                    try { date = DateTimeOffset.FromUnixTimeSeconds(unixTime).ToString("O"); }
+                    catch (ArgumentOutOfRangeException) { date = string.Empty; }
+                }
+                i++;
+            }
+            if (i < source.Length && source[i].StartsWith('\t'))
+            {
+                result.Add(new BlameLine(finalLine, revision, author, date, source[i][1..].TrimEnd('\r')));
+                i++;
+            }
+        }
+        return result;
+    }
+
+    private static int CountTextLines(string text)
+    {
+        if (text.Length == 0) return 0;
+        var lines = text.Count(character => character == '\n');
+        return text[^1] == '\n' ? lines : lines + 1;
     }
 
     private async Task<string> GetShortHeadAsync(string root, CancellationToken cancellationToken)

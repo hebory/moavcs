@@ -6,7 +6,8 @@ public enum VcsKind { Git, Svn, Perforce, Lore }
 public enum VcsCapabilities
 {
     None = 0, Diff = 1, History = 2, Stage = 4, Unstage = 8,
-    Commit = 16, Update = 32, Push = 64, Initialize = 128, Clone = 256
+    Commit = 16, Update = 32, Push = 64, Initialize = 128, Clone = 256,
+    Blame = 512, FileComparison = 1024
 }
 
 public enum VcsOperation { Stage, Unstage, Commit, Update, Push, Initialize, Clone }
@@ -19,6 +20,12 @@ public sealed record FileChange(string Path, string Status, string IndexStatus =
 }
 
 public sealed record HistoryEntry(string Id, string Author, string Date, string Message);
+
+public sealed record FileComparison(string Path, string LeftLabel, string RightLabel, string LeftText, string RightText);
+
+public sealed record BlameLine(int LineNumber, string Revision, string Author, string Date, string Text);
+
+public sealed record BlameResult(string Path, string RevisionLabel, IReadOnlyList<BlameLine> Lines);
 
 public sealed record VcsRequest(VcsOperation Operation, string WorkingDirectory,
     IReadOnlyList<string>? Paths = null, string? Message = null, string? Remote = null, string? Destination = null);
@@ -55,6 +62,10 @@ public interface IVcsProvider
     Task<RepositoryInfo> GetRepositoryAsync(string path, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<FileChange>> GetStatusAsync(string root, CancellationToken cancellationToken = default);
     Task<string> GetDiffAsync(string root, FileChange? file, bool staged = false, CancellationToken cancellationToken = default);
+    Task<FileComparison> GetComparisonAsync(string root, FileChange file, bool staged = false, CancellationToken cancellationToken = default) =>
+        throw new VcsException($"{Name}에서는 아직 파일 비교를 지원하지 않습니다.");
+    Task<BlameResult> GetBlameAsync(string root, FileChange file, CancellationToken cancellationToken = default) =>
+        throw new VcsException($"{Name}에서는 아직 작성자 이력 보기를 지원하지 않습니다.");
     Task<IReadOnlyList<HistoryEntry>> GetHistoryAsync(string root, CancellationToken cancellationToken = default);
     Task<CommandResult> ExecuteAsync(VcsRequest request, CancellationToken cancellationToken = default);
 }

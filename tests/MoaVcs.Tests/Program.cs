@@ -6,6 +6,8 @@ internal static class Program
     {
         try
         {
+            TextDiffTests.Run();
+            Console.WriteLine("PASS: line comparison alignment, bounded fallback, Unicode, cancellation and newline labels");
             await ProcessTests.RunAsync();
             Console.WriteLine("PASS: process capture, cancellation, timeout, bounded output");
             await GitTests.RunAsync();

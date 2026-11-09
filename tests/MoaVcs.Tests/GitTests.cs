@@ -33,17 +33,57 @@ public static class GitTests
             var status = await provider.GetStatusAsync(root);
             Assert(status.Any(c => c.Path == "README.md" && c.Status == "Modified" && !c.IsStaged), "worktree modification status");
             Assert(status.Any(c => c.Path == unicodePath && c.Status == "Untracked"), "porcelain -z Unicode/space path parsing");
+            var baseChange = status.Single(c => c.Path == "README.md");
+            var workingComparison = await provider.GetComparisonAsync(root, baseChange);
+            Assert(workingComparison.LeftLabel == "인덱스" && workingComparison.RightLabel == "작업 트리" &&
+                   workingComparison.LeftText == "one\n" && workingComparison.RightText == "one\ntwo\n",
+                "unstaged comparison shows index and working tree snapshots");
+            var baseBlame = await provider.GetBlameAsync(root, baseChange);
+            Assert(baseBlame.RevisionLabel.StartsWith("HEAD (", StringComparison.Ordinal) &&
+                   baseBlame.Lines.Count == 1 && baseBlame.Lines[0].LineNumber == 1 &&
+                   baseBlame.Lines[0].Author == "moavcs test" && baseBlame.Lines[0].Text == "one",
+                "blame is anchored to committed HEAD and returns line attribution");
             var preview = await provider.GetDiffAsync(root, status.Single(c => c.Path == unicodePath));
             Assert(preview.Contains("+new file", StringComparison.Ordinal), "untracked file diff preview");
 
             (await provider.ExecuteAsync(new VcsRequest(VcsOperation.Stage, root, ["README.md", unicodePath]))).EnsureSuccess();
             status = await provider.GetStatusAsync(root);
             Assert(status.Where(c => c.Path is "README.md" or unicodePath).All(c => c.IsStaged), "stage selected paths");
+            var stagedComparison = await provider.GetComparisonAsync(root, status.Single(c => c.Path == "README.md"), staged: true);
+            Assert(stagedComparison.LeftLabel == "HEAD" && stagedComparison.RightLabel == "인덱스" &&
+                   stagedComparison.LeftText == "one\n" && stagedComparison.RightText == "one\ntwo\n",
+                "staged comparison shows HEAD and index snapshots");
+            var stagedAddition = await provider.GetComparisonAsync(root, status.Single(c => c.Path == unicodePath), staged: true);
+            Assert(stagedAddition.LeftText == string.Empty && stagedAddition.RightText == "new file\n",
+                "staged addition compares an absent HEAD file with index content");
+            await File.AppendAllTextAsync(Path.Combine(root, "README.md"), "three\n", new System.Text.UTF8Encoding(false));
+            status = await provider.GetStatusAsync(root);
+            var mixedComparison = await provider.GetComparisonAsync(root, status.Single(c => c.Path == "README.md"));
+            Assert(mixedComparison.LeftText == "one\ntwo\n" && mixedComparison.RightText == "one\ntwo\nthree\n",
+                "unstaged comparison keeps the index side independent from staged content");
             var indexDiff = await provider.GetDiffAsync(root, status.Single(c => c.Path == "README.md"), staged: true);
             Assert(indexDiff.Contains("+two", StringComparison.Ordinal), "staged index diff");
             (await provider.ExecuteAsync(new VcsRequest(VcsOperation.Unstage, root, [unicodePath]))).EnsureSuccess();
             status = await provider.GetStatusAsync(root);
             Assert(status.Single(c => c.Path == unicodePath).Status == "Untracked", "unstage preserves worktree file");
+            await AssertThrowsVcsAsync(() => provider.GetBlameAsync(root, status.Single(c => c.Path == unicodePath)),
+                "untracked files do not receive invented committed authors");
+
+            await File.WriteAllBytesAsync(Path.Combine(root, "binary.dat"), [0x50, 0x00, 0x44, 0x46]);
+            status = await provider.GetStatusAsync(root);
+            await AssertThrowsVcsAsync(() => provider.GetComparisonAsync(root, status.Single(c => c.Path == "binary.dat")),
+                "binary files are rejected from text comparison");
+            var largePath = "large.txt";
+            await File.WriteAllTextAsync(Path.Combine(root, largePath),
+                new string('x', checked((int)GitProvider.MaxTextSnapshotBytes + 1)), new System.Text.UTF8Encoding(false));
+            status = await provider.GetStatusAsync(root);
+            await AssertThrowsVcsAsync(() => provider.GetComparisonAsync(root, status.Single(c => c.Path == largePath)),
+                "oversized text snapshots are bounded");
+            (await provider.ExecuteAsync(new VcsRequest(VcsOperation.Stage, root, [largePath]))).EnsureSuccess();
+            status = await provider.GetStatusAsync(root);
+            await AssertThrowsVcsAsync(() => provider.GetComparisonAsync(root, status.Single(c => c.Path == largePath), staged: true),
+                "oversized index blobs are rejected before content is read");
+            (await provider.ExecuteAsync(new VcsRequest(VcsOperation.Unstage, root, [largePath]))).EnsureSuccess();
 
             const string literalName = "[draft].txt";
             await File.WriteAllTextAsync(Path.Combine(root, literalName), "literal path\n", new System.Text.UTF8Encoding(false));
@@ -86,6 +126,12 @@ public static class GitTests
             (await Run(runner, renamed, "mv", "--", "old name.txt", "new name.txt")).EnsureSuccess();
             var stagedRename = (await provider.GetStatusAsync(renamed)).Single();
             Assert(stagedRename.Status == "Renamed" && stagedRename.OriginalPath == "old name.txt", "rename test setup");
+            var renameComparison = await provider.GetComparisonAsync(renamed, stagedRename, staged: true);
+            Assert(renameComparison.LeftText == "rename source\n" && renameComparison.RightText == "rename source\n",
+                "staged rename comparison resolves HEAD source and index destination");
+            var renameBlame = await provider.GetBlameAsync(renamed, stagedRename);
+            Assert(renameBlame.Path == stagedRename.Path && renameBlame.Lines.Count == 1 &&
+                   renameBlame.Lines[0].Text == "rename source", "staged rename blame uses the committed original path");
             (await provider.ExecuteAsync(new VcsRequest(VcsOperation.Unstage, renamed,
                 ["new name.txt", stagedRename.OriginalPath!]))).EnsureSuccess();
             var unstagedRename = await provider.GetStatusAsync(renamed);
@@ -139,6 +185,16 @@ public static class GitTests
     private static void Assert(bool condition, string description)
     {
         if (!condition) throw new InvalidOperationException($"Git test failed: {description}");
+    }
+
+    private static async Task AssertThrowsVcsAsync(Func<Task> operation, string description)
+    {
+        try
+        {
+            await operation();
+            throw new InvalidOperationException($"Git test failed: {description}");
+        }
+        catch (VcsException) { }
     }
 
     private static void RemoveCreatedDirectory(string parent, string target)

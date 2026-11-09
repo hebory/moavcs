@@ -11,7 +11,7 @@ public sealed class PerforceProvider : IVcsProvider
     public string Name => "Perforce";
     public string Executable { get; }
     public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage |
-        VcsCapabilities.Unstage | VcsCapabilities.Update;
+        VcsCapabilities.Unstage | VcsCapabilities.Update | VcsCapabilities.FileComparison | VcsCapabilities.Blame;
 
     public async Task<RepositoryInfo> GetRepositoryAsync(string path, CancellationToken cancellationToken = default)
     {
@@ -75,6 +75,59 @@ public sealed class PerforceProvider : IVcsProvider
         return result.StandardOutput;
     }
 
+    public async Task<FileComparison> GetComparisonAsync(string root, FileChange file, bool staged = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        root = Path.GetFullPath(root);
+        var localPath = ResolveSelected(root, file.Path);
+        string? baseline = null;
+        string leftLabel = "P4 (파일 없음)";
+        if (!file.Status.Equals("add", StringComparison.OrdinalIgnoreCase))
+        {
+            var metadata = await GetFileMetadataAsync(root, localPath, file.Path, cancellationToken);
+            var depotFile = Find(metadata, "depotFile")
+                ?? throw new VcsException("Perforce did not map the selected file to a depot path.");
+            var haveRevision = RequireHaveRevision(Find(metadata, "haveRev"));
+            var fileType = Find(metadata, "headType") ?? Find(metadata, "type") ?? string.Empty;
+            EnsureTextFileType(fileType, file.Path);
+            var print = await Run(root, ["print", "-q", $"{depotFile}#{haveRevision}"], cancellationToken);
+            baseline = TextSnapshot.ValidateText(print.StandardOutput, file.Path);
+            leftLabel = $"P4 #{haveRevision}";
+        }
+
+        var working = File.Exists(localPath)
+            ? await TextSnapshot.ReadFileAsync(localPath, file.Path, cancellationToken)
+            : null;
+
+        return new FileComparison(file.Path,
+            leftLabel,
+            working is null ? "작업 공간 (삭제됨)" : "작업 공간",
+            baseline ?? string.Empty, working ?? string.Empty);
+    }
+
+    public async Task<BlameResult> GetBlameAsync(string root, FileChange file,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        root = Path.GetFullPath(root);
+        var localPath = ResolveSelected(root, file.Path);
+        var metadata = await GetFileMetadataAsync(root, localPath, file.Path, cancellationToken);
+        var depotFile = Find(metadata, "depotFile")
+            ?? throw new VcsException("Perforce did not map the selected file to a depot path.");
+        var haveRevision = RequireHaveRevision(Find(metadata, "haveRev"));
+        var fileType = Find(metadata, "headType") ?? Find(metadata, "type") ?? string.Empty;
+        EnsureTextFileType(fileType, file.Path);
+        var print = await Run(root, ["print", "-q", $"{depotFile}#{haveRevision}"], cancellationToken);
+        var content = TextSnapshot.ValidateText(print.StandardOutput, file.Path);
+        if (CountLines(content) > LineDiff.MaxLines)
+            throw new VcsException($"'{file.Path}'은 {LineDiff.MaxLines:N0}줄을 초과하여 작성자 이력을 표시할 수 없습니다.");
+        var sourceLines = SplitLines(content);
+        var annotate = await Run(root, ["annotate", "-u", "-q", $"{depotFile}#{haveRevision}"], cancellationToken);
+        var lines = ParseAnnotate(annotate.StandardOutput, sourceLines, file.Path);
+        return new BlameResult(file.Path, $"P4 #{haveRevision}", lines);
+    }
+
     public async Task<IReadOnlyList<HistoryEntry>> GetHistoryAsync(string root, CancellationToken cancellationToken = default)
     {
         var args = new List<string> { "-ztag", "changes", "-s", "submitted", "-l", "-m", "50", Path.GetFullPath(root) + Path.DirectorySeparatorChar + "..." };
@@ -112,6 +165,81 @@ public sealed class PerforceProvider : IVcsProvider
 
     private async Task<CommandResult> Run(string cwd, IReadOnlyList<string> args, CancellationToken ct) =>
         (await _runner.RunAsync(new CommandSpec(Executable, args, Path.GetFullPath(cwd)), ct)).EnsureSuccess();
+
+    private async Task<Dictionary<string, string>> GetFileMetadataAsync(string root, string localPath, string displayPath,
+        CancellationToken cancellationToken)
+    {
+        var result = await Run(root,
+            ["-ztag", "fstat", "-T", "depotFile,clientFile,path,haveRev,headType,type", localPath], cancellationToken);
+        ValidateTaggedOutput(result.StandardOutput, "fstat");
+        var record = ParseTagged(result.StandardOutput).FirstOrDefault()
+            ?? throw new VcsException($"Perforce could not find a workspace mapping for '{displayPath}'.");
+        var mappedLocal = Find(record, "clientFile", "path");
+        if (mappedLocal is not null && Path.IsPathRooted(mappedLocal) &&
+            !Path.GetFullPath(mappedLocal).Equals(Path.GetFullPath(localPath), StringComparison.OrdinalIgnoreCase))
+            throw new VcsException("Perforce mapped the selected file to a different local path.");
+        return record;
+    }
+
+    private static void EnsureTextFileType(string type, string path)
+    {
+        if (type.StartsWith("binary", StringComparison.OrdinalIgnoreCase) ||
+            type.StartsWith("ubinary", StringComparison.OrdinalIgnoreCase) ||
+            type.StartsWith("apple", StringComparison.OrdinalIgnoreCase) ||
+            type.StartsWith("resource", StringComparison.OrdinalIgnoreCase) ||
+            type.StartsWith("symlink", StringComparison.OrdinalIgnoreCase))
+            throw new VcsException($"'{path}'은 Perforce에서 텍스트 파일로 저장되지 않아 비교/작성자 이력을 표시할 수 없습니다.");
+    }
+
+    private static IReadOnlyList<BlameLine> ParseAnnotate(string output, IReadOnlyList<string> contentLines, string path)
+    {
+        var lines = new List<BlameLine>();
+        var outputLines = SplitLines(output);
+        if (outputLines.Count != contentLines.Count)
+            throw new VcsException("Perforce annotate output line count did not match the #have file contents.");
+        for (var i = 0; i < outputLines.Count; i++)
+        {
+            var line = outputLines[i];
+            var match = System.Text.RegularExpressions.Regex.Match(line,
+                @"^(?<revision>\d+):\s+(?<author>\S+)\s+(?<date>\d{4}/\d{2}/\d{2})\s+.*$");
+            if (!match.Success)
+                throw new VcsException($"Perforce annotate output format is not recognized for '{path}'; expected `revision: user YYYY/MM/DD text`.");
+            lines.Add(new BlameLine(i + 1, match.Groups["revision"].Value,
+                match.Groups["author"].Value, match.Groups["date"].Value, contentLines[i]));
+        }
+        return lines;
+    }
+
+    private static IReadOnlyList<string> SplitLines(string text)
+    {
+        if (text.Length == 0) return [];
+        var lines = System.Text.RegularExpressions.Regex.Split(text, "\\r\\n|\\n|\\r").ToList();
+        if (text.EndsWith('\n') || text.EndsWith('\r')) lines.RemoveAt(lines.Count - 1);
+        return lines;
+    }
+
+    private static int CountLines(string text)
+    {
+        if (text.Length == 0) return 0;
+        var count = 1;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\r')
+            {
+                count++;
+                if (i + 1 < text.Length && text[i + 1] == '\n') i++;
+            }
+            else if (text[i] == '\n') count++;
+        }
+        return text[^1] is '\r' or '\n' ? count - 1 : count;
+    }
+
+    private static string RequireHaveRevision(string? value)
+    {
+        if (!long.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var revision) || revision <= 0)
+            throw new VcsException("Perforce did not report a valid numeric synced (#have) revision for the selected file.");
+        return revision.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
 
     private static string ResolveSelected(string root, string path)
     {
