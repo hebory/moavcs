@@ -30,10 +30,12 @@
 
 업데이트 설치 시 탐색기 메뉴 등록 옵션을 선택하거나 **도구 및 탐색기 설정 → 메뉴 등록 / 갱신**을 누르세요. MoaVCS 소유 표시가 있는 메뉴만 새 구성으로 다시 등록하므로 구버전의 항목이 중복으로 남지 않습니다. 다른 설치본을 제거할 때에는 등록된 실행 파일 경로가 다르면 현재 메뉴를 보존합니다.
 
-폴더 배경에는 현재 폴더를 위한 %V를, 폴더 및 파일에는 대상 경로인 %1을 전달합니다. 각 명령의 `MultiSelectModel`은 `Single`이며 다중 경로를 임의로 합쳐 실행하지 않습니다.
+폴더 배경에는 현재 폴더를 위한 %V를, 폴더 및 파일에는 대상 경로인 %1을 전달합니다. 파일·폴더 선택 메뉴의 `MultiSelectModel`은 `Single`이며 다중 경로를 임의로 합쳐 실행하지 않습니다. 선택된 항목이 없는 폴더 배경 메뉴에는 이 제한을 적용하지 않습니다. v0.6.1 이하에서 배경 메뉴가 숨겨졌다면 업데이트 후 **메뉴 등록 / 갱신**을 눌러 기존 등록을 교체하세요.
+
+등록·갱신·제거 후에는 Windows Shell에 변경 알림을 보내 메뉴 캐시를 갱신합니다. 열려 있던 우클릭 메뉴는 닫고 다시 여세요.
 
 끝이 역슬래시인 경로가 Windows 명령행에서 닫는 따옴표를 이스케이프하지 않도록, 셸 인수 끝에 Windows 파일 이름에서 사용할 수 없는 | 표시를 덧붙입니다. 앱이 이 표시를 제거한 뒤 경로를 처리합니다.
 
 Windows 11의 새 컨텍스트 메뉴는 앱 아이덴티티를 가진 패키지형 앱이 추가 확장 지점을 사용하도록 설계되어 있습니다. 이 앱은 현재 비패키지 WPF 데스크톱 앱이므로 Windows 11에서는 정적 레지스트리 메뉴가 더 많은 옵션 표시 아래에 나타날 수 있습니다. 새 메뉴에 표시하려면 나중에 MSIX 패키지와 IExplorerCommand 구현을 추가해야 합니다.
 
-구현 기준: [Microsoft 정적 계층 메뉴](https://learn.microsoft.com/en-us/windows/win32/shell/creating-static-cascading-menus), [사용자별 ExtendedSubCommandsKey 등록과 구분선](https://learn.microsoft.com/en-us/windows/win32/shell/how-to-create-cascading-menus-with-the-extendedsubcommandskey-registry-entry).
+구현 기준: [Microsoft 정적 계층 메뉴](https://learn.microsoft.com/en-us/windows/win32/shell/creating-static-cascading-menus), [사용자별 ExtendedSubCommandsKey 등록과 구분선](https://learn.microsoft.com/en-us/windows/win32/shell/how-to-create-cascading-menus-with-the-extendedsubcommandskey-registry-entry), [메뉴 선택 모델](https://learn.microsoft.com/en-us/windows/win32/shell/how-to-employ-the-verb-selection-model), [Shell 변경 알림](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify).
