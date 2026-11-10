@@ -304,7 +304,7 @@ public sealed class GitProvider(ICommandRunner runner, string executable = "git"
                 return (await Run(updateRoot, ["pull", "--ff-only"], cancellationToken).ConfigureAwait(false)).EnsureSuccess();
             case VcsOperation.Push:
                 var pushRoot = await RequireRepositoryRootAsync(working, cancellationToken).ConfigureAwait(false);
-                return (await Run(pushRoot, ["push"], cancellationToken).ConfigureAwait(false)).EnsureSuccess();
+                return (await Run(pushRoot, ["-c", "push.autoSetupRemote=true", "push"], cancellationToken).ConfigureAwait(false)).EnsureSuccess();
             default: throw new VcsException("지원하지 않는 Git 작업입니다.");
         }
     }

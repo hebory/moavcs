@@ -89,6 +89,7 @@ internal static class Program
             if (((DataGrid)repoWindow.FindName("HistoryGrid")).Items.Count != 1) throw new InvalidOperationException("History view did not load the fixture commit.");
             RunStartupActionSmoke(settings, _fixture, scratch);
             RunCancelledOperationSmoke(settings, _fixture);
+            RunFirstPushSmoke(scratch);
             RunRemoteSettingsSmoke(settings, _fixture, output);
             // Settings dialog initialization and layout must not install registry keys.
             var opened = new List<Uri>();
@@ -358,6 +359,7 @@ internal static class Program
     {
         var head = GitOutput("rev-parse", "HEAD").Trim();
         var status = GitOutput("status", "--porcelain=v1", "-z");
+        var branchConfig = GitBranchConfig();
         foreach (var (action, expectedLabel) in new[]
                  { ("update", "원격 변경 가져오기"), ("push", "원격 저장소에 보내기") })
         {
@@ -369,10 +371,85 @@ internal static class Program
             while (confirmations.Count == 0 && DateTime.UtcNow < deadline) Pump();
             if (confirmations.Count != 1 || confirmations[0].Label != expectedLabel)
                 throw new InvalidOperationException($"Explorer {action} should reach the existing confirmation before running.");
+            if (action == "push" && !confirmations[0].Detail.Contains(
+                    "처음 푸시하는 브랜치는 기본 푸시가 성공하면 원격 추적 브랜치(upstream)를 설정합니다.", StringComparison.Ordinal))
+                throw new InvalidOperationException("Push confirmation must explain first-push upstream setup.");
             if (((TextBox)window.FindName("OutputLog")).Text.Contains(expectedLabel, StringComparison.Ordinal))
                 throw new InvalidOperationException($"Canceled Explorer {action} must not start the provider operation.");
-            if (GitOutput("rev-parse", "HEAD").Trim() != head || GitOutput("status", "--porcelain=v1", "-z") != status)
+            if (GitOutput("rev-parse", "HEAD").Trim() != head || GitOutput("status", "--porcelain=v1", "-z") != status ||
+                GitBranchConfig() != branchConfig)
                 throw new InvalidOperationException($"Canceled Explorer {action} changed the Git fixture.");
+        }
+    }
+
+    private static void RunFirstPushSmoke(string scratch)
+    {
+        var root = Path.Combine(scratch, "ui-first-push-" + Guid.NewGuid().ToString("N"));
+        var work = Path.Combine(root, "work");
+        var bare = Path.Combine(root, "remote.git");
+        Directory.CreateDirectory(work);
+        Directory.CreateDirectory(bare);
+        var settingsPath = Path.Combine(root, "settings.json");
+        var globalConfigPath = Path.Combine(root, "empty-global.config");
+        var previousGlobalConfig = Environment.GetEnvironmentVariable("GIT_CONFIG_GLOBAL");
+        var previousNoSystemConfig = Environment.GetEnvironmentVariable("GIT_CONFIG_NOSYSTEM");
+        try
+        {
+            File.WriteAllText(globalConfigPath, string.Empty);
+            Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", globalConfigPath);
+            Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
+            GitAt(bare, "init", "--bare");
+            GitAt(work, "init", "--initial-branch=master");
+            GitAt(work, "config", "user.name", "MoaVCS UI test");
+            GitAt(work, "config", "user.email", "test@example.invalid");
+            GitAt(work, "config", "push.default", "simple");
+            File.WriteAllText(Path.Combine(work, "first-push.txt"), "first push smoke\n");
+            GitAt(work, "add", "first-push.txt");
+            GitAt(work, "commit", "-m", "First push smoke");
+            GitAt(work, "remote", "add", "origin", bare);
+            File.WriteAllText(settingsPath, "{ invalid json");
+
+            var confirmations = new List<(string Label, string Detail)>();
+            MainWindow? windowHolder = null;
+            var window = new MainWindow(new LaunchOptions(work, "push"), new SettingsStore(settingsPath),
+                confirmOperation: (label, detail) =>
+                {
+                    if (((FrameworkElement)windowHolder!.FindName("NoticePanel")).Visibility != Visibility.Visible)
+                        throw new InvalidOperationException("The smoke must begin with an earlier settings error notice.");
+                    confirmations.Add((label, detail));
+                    return true;
+                });
+            windowHolder = window;
+            window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (DateTime.UtcNow < deadline)
+            {
+                Pump();
+                if (confirmations.Count == 1 &&
+                    ((Button)window.FindName("CancelButton")).Visibility != Visibility.Visible &&
+                    GitConfigAtOrNull(work, "branch.master.remote") == "origin") break;
+            }
+
+            var upstreamRemote = GitConfigAtOrNull(work, "branch.master.remote");
+            var upstreamBranch = GitConfigAtOrNull(work, "branch.master.merge");
+            if (confirmations.Count != 1 || !confirmations[0].Detail.Contains("upstream", StringComparison.Ordinal) ||
+                upstreamRemote != "origin" || upstreamBranch != "refs/heads/master" ||
+                ((FrameworkElement)window.FindName("NoticePanel")).Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("First push must confirm upstream setup, publish the branch, and clear the previous notice. " +
+                    $"Confirmations={confirmations.Count}; remote={upstreamRemote ?? "<missing>"}; merge={upstreamBranch ?? "<missing>"}; " +
+                    $"notice={((TextBlock)window.FindName("NoticeText")).Text}; " +
+                    $"log={((TextBox)window.FindName("OutputLog")).Text}");
+            var localHead = GitAtOutput(work, "rev-parse", "HEAD").Trim();
+            var remoteHead = GitAtOutput(work, "ls-remote", "--heads", "origin", "refs/heads/master").Split('\t')[0].Trim();
+            if (localHead != remoteHead)
+                throw new InvalidOperationException("First push did not publish the local commit to the disposable bare remote.");
+            Console.WriteLine("PASS: first Git push creates upstream on a local bare remote and clears the previous notice");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", previousGlobalConfig);
+            Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", previousNoSystemConfig);
+            DeleteSmokePath(root);
         }
     }
 
@@ -399,6 +476,31 @@ internal static class Program
 
     private static string GitOutput(params string[] arguments) => new MoaVcs.Core.ProcessCommandRunner()
         .RunAsync(new MoaVcs.Core.CommandSpec("git", arguments, _fixture!)).GetAwaiter().GetResult().EnsureSuccess().StandardOutput;
+
+    private static string GitBranchConfig() => GitBranchConfigAt(_fixture!);
+
+    private static string GitBranchConfigAt(string workingDirectory)
+    {
+        var result = new MoaVcs.Core.ProcessCommandRunner().RunAsync(new MoaVcs.Core.CommandSpec(
+            "git", ["config", "--local", "--null", "--get-regexp", "^branch\\."], workingDirectory))
+            .GetAwaiter().GetResult();
+        if (result.ExitCode is not (0 or 1))
+            throw new InvalidOperationException("Could not read local branch settings: " + result.StandardError);
+        return result.StandardOutput;
+    }
+
+    private static string? GitConfigAtOrNull(string workingDirectory, string key)
+    {
+        var result = new MoaVcs.Core.ProcessCommandRunner().RunAsync(new MoaVcs.Core.CommandSpec(
+            "git", ["config", "--local", "--get", key], workingDirectory)).GetAwaiter().GetResult();
+        if (result.ExitCode == 1) return null;
+        return result.EnsureSuccess().StandardOutput.Trim();
+    }
+
+    private static void GitAt(string workingDirectory, params string[] arguments) => GitAtOutput(workingDirectory, arguments);
+
+    private static string GitAtOutput(string workingDirectory, params string[] arguments) => new MoaVcs.Core.ProcessCommandRunner()
+        .RunAsync(new MoaVcs.Core.CommandSpec("git", arguments, workingDirectory)).GetAwaiter().GetResult().EnsureSuccess().StandardOutput;
 
     private static void Pump()
     {

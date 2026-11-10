@@ -9,7 +9,8 @@ internal static class Program
             if (args.SequenceEqual(["--lore"])) { await RunLoreChecks(); return 0; }
             if (args.SequenceEqual(["--shell"])) { await ShellTests.RunAsync(); Console.WriteLine("PASS: Explorer menu layout, launch actions, command quoting and settings persistence"); return 0; }
             if (args.SequenceEqual(["--remote"])) { await RemoteTests.RunAsync(); Console.WriteLine("PASS: Git origin addresses, preservation and validation"); return 0; }
-            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote or no arguments.");
+            if (args.SequenceEqual(["--push"])) { await PushTests.RunAsync(); Console.WriteLine("PASS: Git first push, upstream tracking and push configuration preservation"); return 0; }
+            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push or no arguments.");
             TextDiffTests.Run();
             Console.WriteLine("PASS: line comparison alignment, bounded fallback, Unicode, cancellation and newline labels");
             await ProcessTests.RunAsync();
@@ -18,6 +19,8 @@ internal static class Program
             Console.WriteLine("PASS: Git status, diff, index, commit, history, clone, Unicode and literal paths");
             await RemoteTests.RunAsync();
             Console.WriteLine("PASS: Git origin addresses, preservation and validation");
+            await PushTests.RunAsync();
+            Console.WriteLine("PASS: Git first push, upstream tracking and push configuration preservation");
             await ProviderTests.RunAsync();
             Console.WriteLine("PASS: SVN, Perforce and Lore adapter contracts");
             await RunLoreChecks();

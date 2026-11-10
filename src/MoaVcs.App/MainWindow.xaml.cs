@@ -475,6 +475,7 @@ public partial class MainWindow : Window
             {
                 VcsOperation.Commit => _provider.Kind == VcsKind.Svn ? $"선택한 {selected.Length}개 파일을 SVN 서버에 커밋합니다.\n\n{message}" : $"현재 스테이지에 포함된 모든 변경을 커밋합니다.\n\n{message}",
                 VcsOperation.Update => _provider.Kind == VcsKind.Git ? "원격 변경을 가져오고 fast-forward로 적용합니다. 분기된 이력은 자동 병합하지 않습니다." : "서버의 변경 내용을 작업 공간에 동기화합니다. 충돌이 발생하면 별도로 해결해야 합니다.",
+                _ when _provider.Kind == VcsKind.Git => "Git 설정에 따라 원격 저장소에 커밋을 전송합니다. 처음 푸시하는 브랜치는 기본 푸시가 성공하면 원격 추적 브랜치(upstream)를 설정합니다.",
                 _ => "현재 브랜치의 커밋을 설정된 원격 저장소에 전송합니다."
             };
             if (!_confirmOperation(label, detail)) return;
@@ -484,6 +485,7 @@ public partial class MainWindow : Window
             Log(label + (_provider.Kind == VcsKind.Svn || operation is VcsOperation.Stage or VcsOperation.Unstage ? $" ({selected.Length}개 파일)" : ""));
             var requestPaths = operation is VcsOperation.Stage or VcsOperation.Unstage or VcsOperation.Commit ? selected : null;
             var result = (await _provider.ExecuteAsync(new VcsRequest(operation, _repository.RootPath, requestPaths, message), token)).EnsureSuccess();
+            if (operation == VcsOperation.Push) NoticePanel.Visibility = Visibility.Collapsed;
             Log(string.IsNullOrWhiteSpace(result.Output) ? "완료" : result.Output);
             if (operation == VcsOperation.Commit) CommitMessage.Clear();
             ApplyChanges(await _provider.GetStatusAsync(_repository.RootPath, token));
