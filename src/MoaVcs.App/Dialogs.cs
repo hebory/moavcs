@@ -51,6 +51,8 @@ public sealed class ProviderDialog : Window
 public sealed class CreateRepositoryWindow : Window
 {
     private readonly Func<VcsKind, IVcsProvider> _providers;
+    private readonly string? _initialDirectory;
+    private readonly VcsOperation? _initialOperation;
     private readonly ComboBox _providerPicker = new() { ItemsSource = ProviderChoice.All };
     private readonly ComboBox _modePicker = new();
     private readonly TextBox _remote = new();
@@ -60,10 +62,15 @@ public sealed class CreateRepositoryWindow : Window
     private readonly Button _create;
     public VcsRequest? Request { get; private set; }
     public VcsKind SelectedKind => ((ProviderChoice)_providerPicker.SelectedItem).Kind;
+    public VcsOperation? SelectedOperation => (_modePicker.SelectedItem as ModeChoice)?.Operation;
+    public string DestinationPath => _destination.Text;
 
-    public CreateRepositoryWindow(Func<VcsKind, IVcsProvider> providers)
+    public CreateRepositoryWindow(Func<VcsKind, IVcsProvider> providers, string? initialDirectory = null,
+        VcsOperation? initialOperation = null, VcsKind? initialVcs = null)
     {
         _providers = providers;
+        _initialDirectory = string.IsNullOrWhiteSpace(initialDirectory) ? null : Path.GetFullPath(initialDirectory);
+        _initialOperation = initialOperation;
         Width = 620; Height = 610;
         var panel = DialogLayout.Create(this, "새 작업 공간", "새 로컬 저장소를 만들거나 원격 저장소를 복제합니다. 인증은 해당 CLI의 기존 설정을 사용합니다.");
         DialogLayout.Label(panel, "버전 관리 시스템");
@@ -77,6 +84,7 @@ public sealed class CreateRepositoryWindow : Window
         var browse = DialogLayout.Button("찾아보기", (_, _) =>
         {
             var picker = new OpenFolderDialog { Title = "대상 폴더 선택" };
+            if (_initialDirectory is not null && Directory.Exists(_initialDirectory)) picker.InitialDirectory = _initialDirectory;
             if (picker.ShowDialog(this) == true) _destination.Text = picker.FolderName;
         });
         browse.Margin = new Thickness(10, 0, 0, 0);
@@ -92,7 +100,11 @@ public sealed class CreateRepositoryWindow : Window
             _remote.IsEnabled = clone;
             _remoteLabel.Opacity = clone ? 1 : 0.4;
         };
-        _providerPicker.SelectedIndex = 0;
+        _providerPicker.SelectedItem = initialVcs is { } kind
+            ? ProviderChoice.All.FirstOrDefault(choice => choice.Kind == kind) ?? ProviderChoice.All[0]
+            : ProviderChoice.All[0];
+        if (initialOperation == VcsOperation.Initialize && _initialDirectory is not null)
+            _destination.Text = _initialDirectory;
     }
 
     private void UpdateModes()
@@ -103,7 +115,10 @@ public sealed class CreateRepositoryWindow : Window
         if (caps.HasFlag(VcsCapabilities.Initialize)) choices.Add(new(VcsOperation.Initialize, "새 로컬 저장소 만들기"));
         if (caps.HasFlag(VcsCapabilities.Clone)) choices.Add(new(VcsOperation.Clone, SelectedKind == VcsKind.Svn ? "SVN 체크아웃" : "원격 저장소 복제"));
         _modePicker.ItemsSource = choices;
-        _modePicker.SelectedIndex = choices.Count > 0 ? 0 : -1;
+        var selectedIndex = _initialOperation is { } initial
+            ? choices.FindIndex(choice => choice.Operation == initial)
+            : -1;
+        _modePicker.SelectedIndex = choices.Count == 0 ? -1 : selectedIndex >= 0 ? selectedIndex : 0;
         _create.IsEnabled = choices.Count > 0;
         _error.Text = choices.Count == 0 ? "Perforce 클라이언트 작업 공간을 P4V 또는 p4 CLI에서 설정한 뒤 ‘폴더 열기’로 연결하세요." : "";
     }

@@ -7,7 +7,8 @@ internal static class Program
         try
         {
             if (args.SequenceEqual(["--lore"])) { await RunLoreChecks(); return 0; }
-            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore or no arguments.");
+            if (args.SequenceEqual(["--shell"])) { await ShellTests.RunAsync(); Console.WriteLine("PASS: Explorer menu layout, launch actions, command quoting and settings persistence"); return 0; }
+            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell or no arguments.");
             TextDiffTests.Run();
             Console.WriteLine("PASS: line comparison alignment, bounded fallback, Unicode, cancellation and newline labels");
             await ProcessTests.RunAsync();

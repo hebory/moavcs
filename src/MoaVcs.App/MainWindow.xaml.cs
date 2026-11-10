@@ -28,10 +28,16 @@ public partial class MainWindow : Window
     private bool _historyLoaded;
     private string? _selectedPath;
     private readonly Action<Window>? _showInspection;
+    private readonly Func<string, string, bool> _confirmOperation;
+    private readonly Func<Window, bool?> _showDialog;
 
-    public MainWindow(LaunchOptions options, SettingsStore? settingsStore = null, Action<Window>? showInspection = null)
+    public MainWindow(LaunchOptions options, SettingsStore? settingsStore = null, Action<Window>? showInspection = null,
+        Func<string, string, bool>? confirmOperation = null, Func<Window, bool?>? showDialog = null)
     {
         _showInspection = showInspection;
+        _confirmOperation = confirmOperation ?? ((title, detail) =>
+            MessageBox.Show(this, detail, "MoaVCS · " + title, MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK);
+        _showDialog = showDialog ?? ShowModalDialog;
         _settingsStore = settingsStore ?? new SettingsStore();
         _launchOptions = options;
         _settings = _settingsStore.Load();
@@ -57,8 +63,16 @@ public partial class MainWindow : Window
             }
             catch (Exception ex) { ShowNotice(ex.Message); }
         }
-        if (_launchOptions.Path is { } path)
-            await OpenRepositoryAsync(path, _launchOptions.Vcs, _launchOptions.Action);
+        try
+        {
+            if (_launchOptions.Action == "settings")
+                await OpenSettingsAsync();
+            else if (_launchOptions.Action is "clone" or "init")
+                await OpenCreateRepositoryAsync();
+            else if (_launchOptions.Path is { } path)
+                await OpenRepositoryAsync(path, _launchOptions.Vcs, _launchOptions.Action);
+        }
+        catch (Exception ex) { ShowNotice(ex.Message); }
     }
 
     public static string GetExecutablePath()
@@ -81,6 +95,12 @@ public partial class MainWindow : Window
             VcsKind.Lore => new LoreProvider(_runner, executable),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
+    }
+
+    private bool? ShowModalDialog(Window window)
+    {
+        window.Owner = this;
+        return window.ShowDialog();
     }
 
     private static VcsKind? DetectKind(string path)
@@ -134,7 +154,6 @@ public partial class MainWindow : Window
                 ApplyChanges(changes);
                 MainTabs.SelectedItem = action == "log" ? HistoryTab : ChangesTab;
                 if (action == "log") await LoadHistoryAsync(token);
-                if (action == "commit") CommitMessage.Focus();
                 RememberRepository(repository);
                 Log($"{provider.Name} · {repository.RootPath}");
             });
@@ -153,6 +172,13 @@ public partial class MainWindow : Window
                     await InspectFileAsync(action == "blame", target: target);
                 }
                 else if (action == "blame") ShowNotice("Blame은 파일 단위로 확인할 수 있습니다. ‘파일 blame…’에서 파일을 선택하세요.");
+                else if (action is "update" or "push")
+                    await ExecuteAsync(action == "update" ? VcsOperation.Update : VcsOperation.Push);
+                if (action == "commit")
+                {
+                    CommitMessage.Focus();
+                    CommitMessage.CaretIndex = CommitMessage.Text.Length;
+                }
             }
         }
         catch (Exception ex) { ShowNotice(ex.Message); }
@@ -410,6 +436,20 @@ public partial class MainWindow : Window
     private async Task ExecuteAsync(VcsOperation operation)
     {
         if (_busy || _repository is null || _provider is null) return;
+        var required = operation switch
+        {
+            VcsOperation.Stage => VcsCapabilities.Stage,
+            VcsOperation.Unstage => VcsCapabilities.Unstage,
+            VcsOperation.Commit => VcsCapabilities.Commit,
+            VcsOperation.Update => VcsCapabilities.Update,
+            VcsOperation.Push => VcsCapabilities.Push,
+            _ => VcsCapabilities.None
+        };
+        if (required == VcsCapabilities.None || !_provider.Capabilities.HasFlag(required))
+        {
+            ShowNotice($"{_provider.Name}에서는 이 작업을 지원하지 않습니다.");
+            return;
+        }
         var selectedChanges = ChangesGrid.SelectedItems.Cast<FileChange>();
         if (operation == VcsOperation.Unstage && _provider.Kind == VcsKind.Git)
             selectedChanges = selectedChanges.Where(c => c.IsStaged);
@@ -434,7 +474,7 @@ public partial class MainWindow : Window
                 VcsOperation.Update => _provider.Kind == VcsKind.Git ? "원격 변경을 가져오고 fast-forward로 적용합니다. 분기된 이력은 자동 병합하지 않습니다." : "서버의 변경 내용을 작업 공간에 동기화합니다. 충돌이 발생하면 별도로 해결해야 합니다.",
                 _ => "현재 브랜치의 커밋을 설정된 원격 저장소에 전송합니다."
             };
-            if (MessageBox.Show(this, detail, "MoaVCS · " + label, MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+            if (!_confirmOperation(label, detail)) return;
         }
         await RunBusyAsync(label + " 중…", async token =>
         {
@@ -514,16 +554,44 @@ public partial class MainWindow : Window
     }
     private async void Settings_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy) return;
-        var dialog = new SettingsWindow(_settings, _settingsStore, _runner) { Owner = this };
-        if (dialog.ShowDialog() == true && _repository is not null) await OpenRepositoryAsync(_repository.RootPath, _repository.Kind);
+        await OpenSettingsAsync();
     }
+
+    private async Task OpenSettingsAsync()
+    {
+        if (_busy) return;
+        var dialog = new SettingsWindow(_settings, _settingsStore, _runner);
+        if (_showDialog(dialog) == true && _repository is not null) await OpenRepositoryAsync(_repository.RootPath, _repository.Kind);
+    }
+
     private async void Create_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        var dialog = new CreateRepositoryWindow(CreateProvider) { Owner = this };
-        if (dialog.ShowDialog() != true) return;
-        var request = dialog.Request!;
+        var dialog = new CreateRepositoryWindow(CreateProvider);
+        if (_showDialog(dialog) != true) return;
+        await CreateRepositoryAsync(dialog);
+    }
+
+    private async Task OpenCreateRepositoryAsync()
+    {
+        if (_busy) return;
+        var actionPath = Path.GetFullPath(_launchOptions.Path ?? Environment.CurrentDirectory);
+        var directory = File.Exists(actionPath)
+            ? Path.GetDirectoryName(actionPath)!
+            : actionPath;
+        var operation = _launchOptions.Action == "init" ? VcsOperation.Initialize : VcsOperation.Clone;
+        var initialDirectory = operation == VcsOperation.Initialize || Directory.Exists(directory)
+            ? directory
+            : Path.GetDirectoryName(directory) ?? Environment.CurrentDirectory;
+        var kind = _launchOptions.Vcs ?? VcsKind.Git;
+        var dialog = new CreateRepositoryWindow(CreateProvider, initialDirectory, operation, kind);
+        if (_showDialog(dialog) != true) return;
+        await CreateRepositoryAsync(dialog);
+    }
+
+    private async Task CreateRepositoryAsync(CreateRepositoryWindow dialog)
+    {
+        if (_busy || dialog.Request is not { } request) return;
         var kind = dialog.SelectedKind;
         var success = false;
         await RunBusyAsync(request.Operation == VcsOperation.Clone ? "저장소를 복제하는 중…" : "저장소를 만드는 중…", async token =>

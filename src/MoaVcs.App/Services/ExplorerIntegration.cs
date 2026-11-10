@@ -9,16 +9,33 @@ public static class ExplorerIntegration
 {
     private const string Owner = "MoaVcs.ExplorerMenu.v1";
     private const string MenuName = "MoaVcs";
-    private const string MenuLabel = "moavcs";
+    private const string MenuLabel = "MoaVCS";
     private static readonly string[] Scopes = ["Directory", "Directory\\Background", "*"];
-    private static readonly (string Id, string Label, string Action, bool BackgroundOnly)[] Verbs =
+    private sealed record MenuEntry(string Id, string Label, string? Action = null, bool Separator = false, MenuEntry[]? Children = null);
+    private static readonly MenuEntry[] FolderMenu =
     [
-        ("Open", "moavcs 열기", "open", false),
-        ("Status", "변경 사항 확인", "status", false),
-        ("Diff", "변경 내용 비교", "diff", false),
-        ("Blame", "행별 이력 보기 (Blame)", "blame", false),
-        ("Log", "변경 이력 보기", "log", false),
-        ("Commit", "커밋", "commit", false)
+        new("10Status", "변경 사항 확인", "status"),
+        new("20Commit", "커밋…", "commit"),
+        new("30Update", "업데이트 / Pull…", "update"),
+        new("40Push", "푸시…", "push"),
+        new("50Log", "저장소 이력 보기", "log", Separator: true),
+        new("60Repository", "저장소", Separator: true, Children:
+        [
+            new("10Open", "MoaVCS에서 열기", "open"),
+            new("20Clone", "저장소 복제 / 체크아웃…", "clone"),
+            new("30Init", "여기에 저장소 만들기…", "init")
+        ]),
+        new("70Settings", "도구 및 탐색기 설정…", "settings", Separator: true)
+    ];
+    private static readonly MenuEntry[] FileMenu =
+    [
+        new("10Diff", "변경 내용 비교", "diff"),
+        new("20Blame", "행별 이력 (Blame)", "blame"),
+        new("30Log", "저장소 이력 보기", "log"),
+        new("40Status", "변경 사항 확인", "status", Separator: true),
+        new("50Commit", "커밋…", "commit"),
+        new("60Open", "MoaVCS에서 열기", "open", Separator: true),
+        new("70Settings", "도구 및 탐색기 설정…", "settings", Separator: true)
     ];
 
     public static bool IsInstalled()
@@ -38,27 +55,43 @@ public static class ExplorerIntegration
             values.Add(new(menuPath, "MUIVerb", MenuLabel));
             values.Add(new(menuPath, "MoaVcsOwner", Owner));
             values.Add(new(menuPath, "ExtendedSubCommandsKey", CommandKeyName(scope)));
+            values.Add(new(menuPath, "Icon", QuoteArgument(exe) + ",0"));
+            values.Add(new(menuPath, "MultiSelectModel", "Single"));
         }
         foreach (var scope in Scopes)
         {
-            var commands = CommandRoot(scope) + "\\Shell";
             values.Add(new(CommandRoot(scope), "MoaVcsOwner", Owner));
-            foreach (var (id, label, action, _) in Verbs)
+            values.Add(new(CommandRoot(scope), "MoaVcsExecutable", exe));
+            AddEntries(CommandRoot(scope) + "\\Shell", scope == "*" ? FileMenu : FolderMenu, scope);
+        }
+        return values;
+
+        void AddEntries(string commands, IEnumerable<MenuEntry> entries, string scope)
+        {
+            foreach (var entry in entries)
             {
-                if (action == "blame" && scope != "*") continue;
-                var verb = commands + "\\" + id;
-                values.Add(new(verb, "MUIVerb", label));
+                // Stable ordinal keys keep the classic cascade in workflow order.
+                var verb = commands + "\\" + entry.Id;
+                values.Add(new(verb, "MUIVerb", entry.Label));
+                values.Add(new(verb, "MultiSelectModel", "Single"));
+                if (entry.Separator) values.Add(new(verb, "CommandFlags", "32", RegistryValueKind.DWord));
+                if (entry.Children is { } children)
+                {
+                    var nestedRoot = verb + "\\Commands";
+                    values.Add(new(verb, "ExtendedSubCommandsKey", nestedRoot["Software\\Classes\\".Length..]));
+                    AddEntries(nestedRoot + "\\Shell", children, scope);
+                    continue;
+                }
                 var commandPath = verb + "\\command";
                 // %V supplies the directory for background clicks; %1 supplies selected files/folders.
                 var target = scope == "Directory\\Background" ? "%V" : "%1";
                 // A trailing backslash before a shell-inserted closing quote escapes that quote on Windows.
                 // The sentinel uses a character forbidden in Windows file names, so it cannot collide.
                 var shellPathOption = "--shell-path \"" + target + "|\"";
-                var invocation = QuoteArgument(exe) + " " + shellPathOption + (action == "open" ? "" : " --action " + action);
+                var invocation = QuoteArgument(exe) + " " + shellPathOption + " --action " + entry.Action;
                 values.Add(new(commandPath, null, invocation));
             }
         }
-        return values;
     }
 
     public static string QuoteArgument(string argument)
@@ -104,12 +137,15 @@ public static class ExplorerIntegration
 
         try
         {
+            // Rebuild only the owner-checked MoaVCS trees so legacy verbs do not survive updates.
+            UninstallOwnedKeys();
             foreach (var group in plan.GroupBy(p => p.KeyPath, StringComparer.OrdinalIgnoreCase))
             {
                 using var key = Registry.CurrentUser.CreateSubKey(group.Key, writable: true)
                     ?? throw new SecurityException($"레지스트리 키를 만들 수 없습니다: {group.Key}");
                 foreach (var value in group)
-                    key.SetValue(value.ValueName ?? "", value.Value, RegistryValueKind.String);
+                    key.SetValue(value.ValueName ?? "", value.Kind == RegistryValueKind.DWord
+                        ? int.Parse(value.Value, System.Globalization.CultureInfo.InvariantCulture) : value.Value, value.Kind);
             }
         }
         catch
@@ -143,6 +179,10 @@ public static class ExplorerIntegration
 
     private static bool CommandTargetsExecutable(string scope, string executable)
     {
+        using var root = Registry.CurrentUser.OpenSubKey(CommandRoot(scope));
+        if (root?.GetValue("MoaVcsExecutable") is string target)
+            return target.Equals(Path.GetFullPath(executable), StringComparison.OrdinalIgnoreCase);
+        // v0.3 and earlier used an unnumbered Open verb without an executable marker.
         using var command = Registry.CurrentUser.OpenSubKey(CommandRoot(scope) + "\\Shell\\Open\\command");
         return command?.GetValue("") is string value && value.StartsWith(QuoteArgument(Path.GetFullPath(executable)) + " ", StringComparison.OrdinalIgnoreCase);
     }
@@ -157,4 +197,4 @@ public static class ExplorerIntegration
     private static string CommandRoot(string scope) => "Software\\Classes\\" + CommandKeyName(scope);
 }
 
-public sealed record RegistryValuePlan(string KeyPath, string? ValueName, string Value);
+public sealed record RegistryValuePlan(string KeyPath, string? ValueName, string Value, RegistryValueKind Kind = RegistryValueKind.String);

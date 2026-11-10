@@ -87,6 +87,8 @@ internal static class Program
             while (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible && DateTime.UtcNow < deadline) Pump();
             if (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible) throw new TimeoutException("History load did not finish.");
             if (((DataGrid)repoWindow.FindName("HistoryGrid")).Items.Count != 1) throw new InvalidOperationException("History view did not load the fixture commit.");
+            RunStartupActionSmoke(settings, _fixture, scratch);
+            RunCancelledOperationSmoke(settings, _fixture);
             // Settings dialog initialization and layout must not install registry keys.
             var opened = new List<Uri>();
             var settingsWindow = new SettingsWindow(new AppSettings(), settings, new MoaVcs.Core.ProcessCommandRunner(), opened.Add);
@@ -206,6 +208,69 @@ internal static class Program
         Console.WriteLine($"PASS: Lore CLI {RunLore(loreExecutable, _loreFixture, "--version").Trim()} compare and blame smoke; {output}");
     }
 
+    private static void RunStartupActionSmoke(SettingsStore settings, string fixture, string scratch)
+    {
+        var parsed = new[] { "update", "push", "clone", "init", "settings" }
+            .Select(action => LaunchOptions.Parse(["--action", action]).Action)
+            .ToArray();
+        if (!parsed.SequenceEqual(["update", "push", "clone", "init", "settings"]))
+            throw new InvalidOperationException("The Explorer action parser did not accept all supported startup actions.");
+
+        Window? shown = null;
+        var cloneWindow = new MainWindow(new LaunchOptions(fixture, "clone"), settings,
+            showDialog: dialog => { shown = dialog; return false; });
+        cloneWindow.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        Pump();
+        var cloneNotice = ((TextBlock)cloneWindow.FindName("NoticeText")).Text;
+        if (shown is not CreateRepositoryWindow clone || clone.SelectedOperation != MoaVcs.Core.VcsOperation.Clone ||
+            clone.DestinationPath.Length != 0 || clone.Request is not null ||
+            ((Grid)cloneWindow.FindName("RepositoryPanel")).Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException($"Explorer clone should open a blank-destination dialog without opening or modifying the clicked repository. Dialog={shown?.GetType().Name ?? "<none>"}; notice={cloneNotice}");
+
+        var initPath = Path.Combine(scratch, "ui-action-init-" + Guid.NewGuid().ToString("N"));
+        shown = null;
+        var initWindow = new MainWindow(new LaunchOptions(initPath, "init"), settings,
+            showDialog: dialog => { shown = dialog; return false; });
+        initWindow.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        Pump();
+        if (shown is not CreateRepositoryWindow init || init.SelectedOperation != MoaVcs.Core.VcsOperation.Initialize ||
+            !Path.GetFullPath(init.DestinationPath).Equals(Path.GetFullPath(initPath), StringComparison.OrdinalIgnoreCase) ||
+            init.Request is not null || Directory.Exists(initPath) ||
+            ((Grid)initWindow.FindName("RepositoryPanel")).Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("Explorer init should prefill the selected target and wait for dialog confirmation before creating it.");
+
+        shown = null;
+        var settingsWindow = new MainWindow(new LaunchOptions(fixture, "settings"), settings,
+            showDialog: dialog => { shown = dialog; return false; });
+        settingsWindow.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        Pump();
+        if (shown is not SettingsWindow ||
+            ((Grid)settingsWindow.FindName("RepositoryPanel")).Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("Explorer settings should open its dialog without trying to detect the selected repository.");
+    }
+
+    private static void RunCancelledOperationSmoke(SettingsStore settings, string fixture)
+    {
+        var head = GitOutput("rev-parse", "HEAD").Trim();
+        var status = GitOutput("status", "--porcelain=v1", "-z");
+        foreach (var (action, expectedLabel) in new[]
+                 { ("update", "원격 변경 가져오기"), ("push", "원격 저장소에 보내기") })
+        {
+            var confirmations = new List<(string Label, string Detail)>();
+            var window = new MainWindow(new LaunchOptions(fixture, action), settings,
+                confirmOperation: (label, detail) => { confirmations.Add((label, detail)); return false; });
+            window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            var deadline = DateTime.UtcNow.AddSeconds(20);
+            while (confirmations.Count == 0 && DateTime.UtcNow < deadline) Pump();
+            if (confirmations.Count != 1 || confirmations[0].Label != expectedLabel)
+                throw new InvalidOperationException($"Explorer {action} should reach the existing confirmation before running.");
+            if (((TextBox)window.FindName("OutputLog")).Text.Contains(expectedLabel, StringComparison.Ordinal))
+                throw new InvalidOperationException($"Canceled Explorer {action} must not start the provider operation.");
+            if (GitOutput("rev-parse", "HEAD").Trim() != head || GitOutput("status", "--porcelain=v1", "-z") != status)
+                throw new InvalidOperationException($"Canceled Explorer {action} changed the Git fixture.");
+        }
+    }
+
     private static string RunLore(string executable, string workingDirectory, params string[] arguments) =>
         new MoaVcs.Core.ProcessCommandRunner().RunAsync(new MoaVcs.Core.CommandSpec(
             executable, arguments, workingDirectory, Timeout: TimeSpan.FromSeconds(45))).GetAwaiter().GetResult().EnsureSuccess().StandardOutput;
@@ -226,6 +291,9 @@ internal static class Program
 
     private static void Git(params string[] arguments) => new MoaVcs.Core.ProcessCommandRunner()
         .RunAsync(new MoaVcs.Core.CommandSpec("git", arguments, _fixture!)).GetAwaiter().GetResult().EnsureSuccess();
+
+    private static string GitOutput(params string[] arguments) => new MoaVcs.Core.ProcessCommandRunner()
+        .RunAsync(new MoaVcs.Core.CommandSpec("git", arguments, _fixture!)).GetAwaiter().GetResult().EnsureSuccess().StandardOutput;
 
     private static void Pump()
     {
