@@ -5,7 +5,7 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>moavcs</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.4.0</Version>
+    <Version>0.5.0</Version>
     <Description>One workspace for every version control system.</Description>
   </PropertyGroup>
   <ItemGroup>

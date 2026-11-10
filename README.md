@@ -43,7 +43,7 @@ Lore 0.13.0 이상에서도 내장 좌우 diff와 Blame을 사용할 수 있습�
     .\artifacts\publish\win-x64\moavcs.exe --install-context-menu
     .\artifacts\publish\win-x64\moavcs.exe --uninstall-context-menu
 
-폴더와 폴더 배경의 **MoaVCS** 메뉴에는 상태·커밋·업데이트·푸시와 저장소 관리 하위 메뉴가 있습니다. 파일 메뉴에는 Diff·Blame을 먼저 표시합니다. 작업 그룹은 구분선으로 나누며, 복제·생성·설정 대화상자도 바로 열 수 있습니다. 업데이트 후 **메뉴 등록 / 갱신**으로 기존 구성을 교체하세요. Windows 11은 고전 Win32 탐색기 메뉴를 **더 많은 옵션 표시** 아래에 보여줄 수 있습니다. 자세한 내용은 [탐색기 메뉴 안내](docs/explorer-integration.md)를 참고하세요.
+TortoiseGit처럼 **커밋**과 폴더의 **업데이트 / Pull**은 탐색기 첫 메뉴에서 바로 실행하고, 나머지는 **MoaVCS** 하위 메뉴에서 선택합니다. 하위 메뉴는 동기화·비교, 로그·Blame·변경 확인, 저장소 관리, 설정을 구분선으로 나눕니다. 복제·생성도 추가 하위 메뉴 없이 바로 열립니다. 설정의 두 체크박스를 끄면 커밋·업데이트를 MoaVCS 하위 메뉴에 모을 수 있습니다. 업데이트 후 **메뉴 등록 / 갱신**으로 기존 구성을 교체하세요. Windows 11에서는 **더 많은 옵션 표시**에서 사용합니다. 자세한 내용은 [탐색기 메뉴 안내](docs/explorer-integration.md)를 참고하세요.
 
 ## Moa Launcher 이미지
 
