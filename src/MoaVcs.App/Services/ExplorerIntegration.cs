@@ -22,6 +22,7 @@ public static class ExplorerIntegration
         new("60Open", "MoaVCS에서 열기", "open", Separator: true),
         new("70Clone", "복제 / 체크아웃…", "clone"),
         new("80Init", "여기에 저장소 만들기…", "init"),
+        new("85Remote", "원격 주소…", "remote"),
         new("90Settings", "설정…", "settings", Separator: true)
     ];
     private static readonly MenuEntry[] FileMenu =
@@ -32,6 +33,7 @@ public static class ExplorerIntegration
         new("40Blame", "행별 이력 (Blame)", "blame"),
         new("50Status", "변경 사항 확인", "status"),
         new("60Open", "MoaVCS에서 열기", "open", Separator: true),
+        new("85Remote", "원격 주소…", "remote"),
         new("90Settings", "설정…", "settings", Separator: true)
     ];
 

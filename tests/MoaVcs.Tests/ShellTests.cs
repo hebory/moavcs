@@ -13,7 +13,7 @@ public static class ShellTests
         Check(LaunchOptions.Parse(["--shell-path", @"C:\Work Area\repo\|"]).Path == @"C:\Work Area\repo\", "shell path sentinel is removed");
         Check(LaunchOptions.Parse(["--vcs", "Perforce", "--action", "diff"]).Action == "diff", "CLI parses provider and action");
         Check(LaunchOptions.Parse(["--action", "blame"]).Action == "blame", "CLI accepts blame action");
-        foreach (var action in new[] { "update", "push", "clone", "init", "settings" })
+        foreach (var action in new[] { "update", "push", "clone", "init", "settings", "remote" })
             Check(LaunchOptions.Parse(["--action", action.ToUpperInvariant()]).Action == action, "CLI accepts " + action);
         Throws<FormatException>(() => LaunchOptions.Parse(["--action", "delete-all"]), "unknown actions are rejected");
         Throws<FormatException>(() => LaunchOptions.Parse(["--vcs", "invented"]), "unknown providers are rejected");
@@ -37,6 +37,8 @@ public static class ShellTests
               plan.Single(p => p.ValueName is null && p.KeyPath.EndsWith(@"\command", StringComparison.Ordinal) && p.Value.Contains("--action blame", StringComparison.Ordinal)).KeyPath.Contains("MoaVcs.FileCommands", StringComparison.Ordinal),
             "Blame remains file-only");
         Check(plan.Where(p => p.Value.Contains("--shell-path", StringComparison.Ordinal)).All(p => p.Value.Contains("\"%1|\"", StringComparison.Ordinal) || p.Value.Contains("\"%V|\"", StringComparison.Ordinal)), "shell substitutions include a safe trailing sentinel");
+        Check(plan.Count(p => p.ValueName is null && p.KeyPath.EndsWith(@"\command", StringComparison.Ordinal) && p.Value.Contains("--action remote", StringComparison.Ordinal)) == 3,
+            "Remote address action is available in every context without VCS filtering");
         var noPromotions = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = false };
         CheckMenuLayout(ExplorerIntegration.BuildRegistrationPlan(executable, noPromotions), executable, noPromotions);
         var onlyUpdate = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = true };
@@ -75,8 +77,8 @@ public static class ShellTests
             var shell = root + @"\Shell\";
             var isFile = scope == "*";
             var allEntries = isFile
-                ? new[] { "10Commit", "20Diff", "30Log", "40Blame", "50Status", "60Open", "90Settings" }
-                : new[] { "10Update", "20Push", "30Commit", "40Log", "50Status", "60Open", "70Clone", "80Init", "90Settings" };
+                ? new[] { "10Commit", "20Diff", "30Log", "40Blame", "50Status", "60Open", "85Remote", "90Settings" }
+                : new[] { "10Update", "20Push", "30Commit", "40Log", "50Status", "60Open", "70Clone", "80Init", "85Remote", "90Settings" };
             var expected = allEntries.Where(id =>
                 !((id == "10Commit" || id == "30Commit") && settings.ShowCommitAtTopLevel) &&
                 !(id == "10Update" && !isFile && settings.ShowUpdateAtTopLevel)).ToArray();
@@ -91,6 +93,10 @@ public static class ShellTests
             foreach (var separator in separators)
                 Check(plan.Any(p => p.KeyPath == shell + separator && p.ValueName == "CommandFlags" &&
                                     p.Kind == Microsoft.Win32.RegistryValueKind.DWord && p.Value == "32"), "typed group separator");
+            Check(plan.Any(p => p.KeyPath == shell + "85Remote" && p.ValueName == "MUIVerb" && p.Value == "원격 주소…") &&
+                  plan.Any(p => p.KeyPath == shell + "85Remote\\command" && p.ValueName is null && p.Value.EndsWith("--action remote", StringComparison.Ordinal)),
+                "flat Remote action uses the expected label and command in " + scope);
+            Check(!plan.Any(p => p.KeyPath == shell + "85Remote" && p.ValueName == "CommandFlags"), "Remote address action is not separated");
             Check(!plan.Any(p => p.KeyPath.Contains(@"\60Repository", StringComparison.Ordinal) ||
                                 p.ValueName == "ExtendedSubCommandsKey" && p.Value.Contains("Repository", StringComparison.Ordinal)), "menu has no nested Repository submenu");
             Check(!plan.Any(p => p.KeyPath == shell + expected[0] && p.ValueName == "CommandFlags"), "first submenu item has no separator for " + scope);

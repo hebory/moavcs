@@ -8,13 +8,16 @@ internal static class Program
         {
             if (args.SequenceEqual(["--lore"])) { await RunLoreChecks(); return 0; }
             if (args.SequenceEqual(["--shell"])) { await ShellTests.RunAsync(); Console.WriteLine("PASS: Explorer menu layout, launch actions, command quoting and settings persistence"); return 0; }
-            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell or no arguments.");
+            if (args.SequenceEqual(["--remote"])) { await RemoteTests.RunAsync(); Console.WriteLine("PASS: Git origin addresses, preservation and validation"); return 0; }
+            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote or no arguments.");
             TextDiffTests.Run();
             Console.WriteLine("PASS: line comparison alignment, bounded fallback, Unicode, cancellation and newline labels");
             await ProcessTests.RunAsync();
             Console.WriteLine("PASS: process capture, cancellation, timeout, bounded output");
             await GitTests.RunAsync();
             Console.WriteLine("PASS: Git status, diff, index, commit, history, clone, Unicode and literal paths");
+            await RemoteTests.RunAsync();
+            Console.WriteLine("PASS: Git origin addresses, preservation and validation");
             await ProviderTests.RunAsync();
             Console.WriteLine("PASS: SVN, Perforce and Lore adapter contracts");
             await RunLoreChecks();

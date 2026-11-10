@@ -5,6 +5,7 @@ namespace MoaVcs.Core.Providers;
 /// <summary>Git adapter built on the official git executable.</summary>
 public sealed class GitProvider(ICommandRunner runner, string executable = "git") : IVcsProvider
 {
+    private const string ExternalOriginConfigReadOnlyReason = "origin URL이 전역, include 또는 worktree 설정에서 오므로 안전하게 보존할 수 없어 읽기 전용입니다.";
     public const long MaxTextSnapshotBytes = TextSnapshot.MaxBytes;
     public const int MaxBlameLines = 50_000;
 
@@ -13,7 +14,82 @@ public sealed class GitProvider(ICommandRunner runner, string executable = "git"
     public string Executable => executable;
     public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage |
         VcsCapabilities.Unstage | VcsCapabilities.Commit | VcsCapabilities.Update | VcsCapabilities.Push |
-        VcsCapabilities.Initialize | VcsCapabilities.Clone | VcsCapabilities.FileComparison | VcsCapabilities.Blame;
+        VcsCapabilities.Initialize | VcsCapabilities.Clone | VcsCapabilities.FileComparison | VcsCapabilities.Blame |
+        VcsCapabilities.RemoteUrl;
+
+    public async Task<RemoteInfo> GetRemoteAsync(string root, CancellationToken cancellationToken = default)
+    {
+        root = await RequireRepositoryRootAsync(root, cancellationToken).ConfigureAwait(false);
+        var fetchEntries = await ReadRemoteConfigEntriesAsync(root, "remote.origin.url", cancellationToken).ConfigureAwait(false);
+        var pushEntries = await ReadRemoteConfigEntriesAsync(root, "remote.origin.pushurl", cancellationToken).ConfigureAwait(false);
+        var sectionKeys = await Run(root,
+            ["config", "--null", "--name-only", "--get-regexp", "^remote\\.origin\\."], cancellationToken).ConfigureAwait(false);
+        if (sectionKeys.ExitCode is not (0 or 1)) sectionKeys.EnsureSuccess();
+        var remoteList = (await Run(root, ["remote"], cancellationToken).ConfigureAwait(false)).EnsureSuccess();
+        var hasOriginConfig = sectionKeys.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Any(key => key.StartsWith("remote.origin.", StringComparison.OrdinalIgnoreCase));
+        var exists = fetchEntries.Count > 0 || pushEntries.Count > 0 || hasOriginConfig ||
+            remoteList.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Contains("origin", StringComparer.Ordinal);
+
+        if (!exists)
+            return new RemoteInfo("origin", false, [], [], [], []);
+
+        var readOnlyReason = await FindReadOnlyReasonAsync(root, fetchEntries.Concat(pushEntries), cancellationToken)
+            .ConfigureAwait(false);
+        var configuredFetch = fetchEntries.Select(entry => entry.Value).ToArray();
+        var configuredPush = pushEntries.Select(entry => entry.Value).ToArray();
+        if (configuredFetch.Length == 0)
+            readOnlyReason ??= "origin 항목은 있지만 fetch 주소가 없어 안전하게 변경할 수 없습니다.";
+        else if (configuredFetch.Count(url => string.Equals(url, configuredFetch[0], StringComparison.Ordinal)) > 1)
+            readOnlyReason ??= "origin의 첫 fetch 주소가 중복되어 하나만 안전하게 변경할 수 없습니다.";
+
+        var unsafeControlCharacters = configuredFetch.Any(HasControlCharacter) || configuredPush.Any(HasControlCharacter);
+        if (unsafeControlCharacters)
+            readOnlyReason ??= "origin 설정에 줄바꿈 또는 제어 문자가 포함되어 안전하게 편집할 수 없습니다.";
+
+        IReadOnlyList<string> effectiveFetch = [];
+        IReadOnlyList<string> effectivePush = [];
+        if (configuredFetch.Length > 0 && !unsafeControlCharacters &&
+            !string.Equals(readOnlyReason, ExternalOriginConfigReadOnlyReason, StringComparison.Ordinal))
+        {
+            effectiveFetch = await ReadEffectiveUrlsAsync(root, ["remote", "get-url", "--all", "origin"], cancellationToken)
+                .ConfigureAwait(false);
+            effectivePush = await ReadEffectiveUrlsAsync(root, ["remote", "get-url", "--push", "--all", "origin"], cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return new RemoteInfo("origin", true, configuredFetch, configuredPush, effectiveFetch, effectivePush, readOnlyReason);
+    }
+
+    public async Task SetRemoteUrlAsync(string root, string url, RemoteInfo expected,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        var validatedUrl = RemoteUrl.Validate(url);
+        root = await RequireRepositoryRootAsync(root, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var current = await GetRemoteAsync(root, cancellationToken).ConfigureAwait(false);
+        if (!RemoteInfoMatches(current, expected))
+            throw new VcsException("원격 저장소 설정이 다른 곳에서 바뀌었습니다. 화면을 새로 고친 뒤 다시 시도하세요.");
+        if (current.ReadOnlyReason is not null)
+            throw new VcsException(current.ReadOnlyReason);
+
+        if (!current.Exists)
+        {
+            (await Run(root, ["remote", "add", "origin", validatedUrl], cancellationToken).ConfigureAwait(false)).EnsureSuccess();
+            return;
+        }
+
+        if (current.FetchUrls.Count == 0)
+            throw new VcsException("origin 설정은 있지만 fetch 주소가 없어 안전하게 변경할 수 없습니다.");
+
+        // Git remote set-url rejects multivalued remote.origin.url. Replace the exact first value,
+        // using fixed-value matching so URL characters are never treated as a regular expression.
+        (await Run(root, ["config", "--local", "--fixed-value", "--replace-all", "--", "remote.origin.url",
+            validatedUrl, current.FetchUrls[0]], cancellationToken).ConfigureAwait(false)).EnsureSuccess();
+    }
 
     public async Task<RepositoryInfo> GetRepositoryAsync(string path, CancellationToken cancellationToken = default)
     {
@@ -371,6 +447,74 @@ public sealed class GitProvider(ICommandRunner runner, string executable = "git"
     {
         return await runner.RunAsync(new CommandSpec(executable, args, root, stdin, TimeSpan.FromMinutes(5)), cancellationToken).ConfigureAwait(false);
     }
+
+    private async Task<List<RemoteConfigEntry>> ReadRemoteConfigEntriesAsync(string root, string key,
+        CancellationToken cancellationToken)
+    {
+        var result = await Run(root, ["config", "--null", "--show-origin", "--show-scope", "--get-all", key], cancellationToken)
+            .ConfigureAwait(false);
+        if (result.ExitCode == 1) return [];
+        result.EnsureSuccess();
+        var fields = result.StandardOutput.Split('\0');
+        if (fields.Length % 3 != 1 || fields[^1].Length != 0)
+            throw new VcsException("Git 원격 설정을 안전하게 읽지 못했습니다.");
+        var entries = new List<RemoteConfigEntry>(fields.Length / 3);
+        for (var i = 0; i + 2 < fields.Length; i += 3)
+            entries.Add(new RemoteConfigEntry(fields[i], fields[i + 1], fields[i + 2]));
+        return entries;
+    }
+
+    private async Task<string?> FindReadOnlyReasonAsync(string root, IEnumerable<RemoteConfigEntry> entries,
+        CancellationToken cancellationToken)
+    {
+        var urlEntries = entries.ToArray();
+        if (urlEntries.Length == 0) return null;
+        var configPathResult = (await Run(root, ["rev-parse", "--git-path", "config"], cancellationToken)
+            .ConfigureAwait(false)).EnsureSuccess();
+        var configPath = configPathResult.StandardOutput.Trim();
+        var expectedConfig = Path.GetFullPath(Path.IsPathRooted(configPath) ? configPath : Path.Combine(root, configPath));
+
+        foreach (var entry in urlEntries)
+        {
+            if (!entry.Scope.Equals("local", StringComparison.OrdinalIgnoreCase) ||
+                !TryResolveConfigOrigin(root, entry.Origin, out var sourcePath) ||
+                !Path.GetFullPath(sourcePath).Equals(expectedConfig, StringComparison.OrdinalIgnoreCase))
+            {
+                return ExternalOriginConfigReadOnlyReason;
+            }
+        }
+        return null;
+    }
+
+    private static bool TryResolveConfigOrigin(string root, string origin, out string path)
+    {
+        path = string.Empty;
+        if (!origin.StartsWith("file:", StringComparison.Ordinal)) return false;
+        var source = origin[5..];
+        if (source.Length == 0) return false;
+        path = Path.GetFullPath(Path.IsPathRooted(source) ? source : Path.Combine(root, source));
+        return true;
+    }
+
+    private async Task<IReadOnlyList<string>> ReadEffectiveUrlsAsync(string root, IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        var result = (await Run(root, args, cancellationToken).ConfigureAwait(false)).EnsureSuccess();
+        return result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static bool RemoteInfoMatches(RemoteInfo current, RemoteInfo expected) =>
+        string.Equals(current.Name, expected.Name, StringComparison.Ordinal) &&
+        current.Exists == expected.Exists &&
+        current.FetchUrls.SequenceEqual(expected.FetchUrls, StringComparer.Ordinal) &&
+        current.PushUrls.SequenceEqual(expected.PushUrls, StringComparer.Ordinal) &&
+        current.EffectiveFetchUrls.SequenceEqual(expected.EffectiveFetchUrls, StringComparer.Ordinal) &&
+        current.EffectivePushUrls.SequenceEqual(expected.EffectivePushUrls, StringComparer.Ordinal) &&
+        string.Equals(current.ReadOnlyReason, expected.ReadOnlyReason, StringComparison.Ordinal);
+
+    private static bool HasControlCharacter(string value) => value.Any(char.IsControl);
+
+    private sealed record RemoteConfigEntry(string Scope, string Origin, string Value);
 
     private static string NormalizeRoot(string root)
     {

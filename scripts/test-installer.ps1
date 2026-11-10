@@ -51,6 +51,7 @@ $menus = @(
             @{ Id = "60Open"; Action = "open"; Separator = $true }
             @{ Id = "70Clone"; Action = "clone" }
             @{ Id = "80Init"; Action = "init" }
+            @{ Id = "85Remote"; Action = "remote"; Label = "원격 주소…" }
             @{ Id = "90Settings"; Action = "settings"; Separator = $true }
         )
     }
@@ -66,6 +67,7 @@ $menus = @(
             @{ Id = "60Open"; Action = "open"; Separator = $true }
             @{ Id = "70Clone"; Action = "clone" }
             @{ Id = "80Init"; Action = "init" }
+            @{ Id = "85Remote"; Action = "remote"; Label = "원격 주소…" }
             @{ Id = "90Settings"; Action = "settings"; Separator = $true }
         )
     }
@@ -80,6 +82,7 @@ $menus = @(
             @{ Id = "40Blame"; Action = "blame" }
             @{ Id = "50Status"; Action = "status" }
             @{ Id = "60Open"; Action = "open"; Separator = $true }
+            @{ Id = "85Remote"; Action = "remote"; Label = "원격 주소…" }
             @{ Id = "90Settings"; Action = "settings"; Separator = $true }
         )
     }
@@ -138,6 +141,9 @@ function Assert-Registration {
             try {
                 if ($null -eq $labelKey -or [string]::IsNullOrWhiteSpace([string]$labelKey.GetValue("MUIVerb"))) {
                     throw "Missing display label for $($menu.Name) verb $($verb.Id)."
+                }
+                if ($verb.ContainsKey("Label") -and $labelKey.GetValue("MUIVerb") -cne $verb.Label) {
+                    throw "Unexpected label for $($menu.Name) verb $($verb.Id)."
                 }
                 if ($labelKey.GetValue("MultiSelectModel") -cne "Single" -or
                     $labelKey.GetValueKind("MultiSelectModel") -ne [Microsoft.Win32.RegistryValueKind]::String) {
@@ -210,9 +216,9 @@ function Assert-QuickActionsDemoted {
             if ($null -eq $shell) { throw "Missing submenu at HKCU:\$shellPath." }
             $actualIds = @($shell.GetSubKeyNames() | Sort-Object -CaseSensitive)
             $expectedIds = if ($menu.Name -eq "file") {
-                @("10Commit", "20Diff", "30Log", "40Blame", "50Status", "60Open", "90Settings")
+                @("10Commit", "20Diff", "30Log", "40Blame", "50Status", "60Open", "85Remote", "90Settings")
             } else {
-                @("10Update", "20Push", "30Commit", "40Log", "50Status", "60Open", "70Clone", "80Init", "90Settings")
+                @("10Update", "20Push", "30Commit", "40Log", "50Status", "60Open", "70Clone", "80Init", "85Remote", "90Settings")
             }
             $expectedIds = @($expectedIds | Sort-Object -CaseSensitive)
             if (Compare-Object -ReferenceObject $expectedIds -DifferenceObject $actualIds) {

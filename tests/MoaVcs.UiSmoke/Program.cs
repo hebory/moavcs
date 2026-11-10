@@ -89,6 +89,7 @@ internal static class Program
             if (((DataGrid)repoWindow.FindName("HistoryGrid")).Items.Count != 1) throw new InvalidOperationException("History view did not load the fixture commit.");
             RunStartupActionSmoke(settings, _fixture, scratch);
             RunCancelledOperationSmoke(settings, _fixture);
+            RunRemoteSettingsSmoke(settings, _fixture, output);
             // Settings dialog initialization and layout must not install registry keys.
             var opened = new List<Uri>();
             var settingsWindow = new SettingsWindow(new AppSettings(), settings, new MoaVcs.Core.ProcessCommandRunner(), opened.Add);
@@ -267,6 +268,90 @@ internal static class Program
         if (shown is not SettingsWindow ||
             ((Grid)settingsWindow.FindName("RepositoryPanel")).Visibility != Visibility.Collapsed)
             throw new InvalidOperationException("Explorer settings should open its dialog without trying to detect the selected repository.");
+    }
+
+    private static void RunRemoteSettingsSmoke(SettingsStore settings, string fixture, string output)
+    {
+        const string original = "https://example.invalid/original.git";
+        const string updated = "git@example.invalid:team/새 저장소.git";
+        const string externalChange = "https://example.invalid/changed-elsewhere.git";
+        Git("remote", "add", "origin", original);
+        var head = GitOutput("rev-parse", "HEAD");
+        var status = GitOutput("status", "--porcelain=v1", "-z");
+
+        var canceled = Open(dialog =>
+        {
+            if (dialog.Url != original) throw new InvalidOperationException("Remote dialog must load the configured origin URL.");
+            Render(dialog, Path.Combine(output, "remote-settings.png"));
+            dialog.RemoteUrlTextBox.Text = " ";
+            Descendants((DependencyObject)dialog.Content).OfType<Button>().Single(b => b.Name == "SaveRemoteButton")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (dialog.DialogResult == true || string.IsNullOrWhiteSpace(Descendants((DependencyObject)dialog.Content)
+                    .OfType<TextBlock>().Single(t => t.Name == "RemoteValidationNotice").Text))
+                throw new InvalidOperationException("Invalid remote input must keep the dialog open with an error.");
+            dialog.RemoteUrlTextBox.Text = updated;
+            return false;
+        });
+        if (GitOutput("remote", "get-url", "origin").Trim() != original)
+            throw new InvalidOperationException("Canceling remote settings changed origin.");
+        if (((Button)canceled.FindName("RemoteButton")).IsEnabled != true)
+            throw new InvalidOperationException("The repository origin button must be available after loading Git.");
+        canceled.Width = 1100;
+        canceled.Height = 740;
+        Render(canceled, Path.Combine(output, "workspace-remote-min.png"));
+
+        // Exercise the toolbar as well as the Explorer startup action.
+        var saved = Open(dialog => { dialog.RemoteUrlTextBox.Text = updated; return true; }, fromToolbar: true);
+        if (GitOutput("remote", "get-url", "origin").Trim() != updated)
+            throw new InvalidOperationException("Remote settings Save did not update origin.");
+        if (((TextBox)saved.FindName("OutputLog")).Text.Contains(updated, StringComparison.Ordinal))
+            throw new InvalidOperationException("Remote URL must not be copied into the operation log.");
+
+        var stale = Open(dialog =>
+        {
+            if (dialog.Url != updated) throw new InvalidOperationException("Reopening remote settings must load the saved URL.");
+            Git("remote", "set-url", "origin", externalChange);
+            dialog.RemoteUrlTextBox.Text = original;
+            return true;
+        });
+        if (GitOutput("remote", "get-url", "origin").Trim() != externalChange ||
+            string.IsNullOrWhiteSpace(((TextBlock)stale.FindName("NoticeText")).Text))
+            throw new InvalidOperationException("Stale remote settings must report an error and preserve the external change.");
+        if (GitOutput("rev-parse", "HEAD") != head || GitOutput("status", "--porcelain=v1", "-z") != status)
+            throw new InvalidOperationException("Origin settings must preserve HEAD, index and worktree state.");
+
+        var readOnly = new RemoteSettingsWindow(fixture, new MoaVcs.Core.RemoteInfo("origin", true,
+            [original], ["ssh://git@example.invalid/push.git"], [original], ["ssh://git@example.invalid/push.git"],
+            "외부 설정에서 정의된 주소입니다."));
+        Render(readOnly, Path.Combine(output, "remote-settings-readonly.png"));
+        var saveButton = Descendants((DependencyObject)readOnly.Content).OfType<Button>().Single(b => b.Name == "SaveRemoteButton");
+        if (saveButton.IsEnabled || !readOnly.RemoteUrlTextBox.IsReadOnly)
+            throw new InvalidOperationException("Read-only origin settings must prevent editing and saving.");
+        Console.WriteLine("PASS: Git origin dialog, toolbar and Explorer actions, save/cancel, validation and stale-setting protection");
+
+        MainWindow Open(Func<RemoteSettingsWindow, bool?> respond, bool fromToolbar = false)
+        {
+            var shown = false;
+            var window = new MainWindow(new LaunchOptions(fixture, fromToolbar ? "open" : "remote"), settings,
+                showDialog: dialog =>
+                {
+                    if (dialog is not RemoteSettingsWindow remote) throw new InvalidOperationException("Expected the origin dialog.");
+                    shown = true;
+                    return respond(remote);
+                });
+            window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            var deadline = DateTime.UtcNow.AddSeconds(20);
+            if (fromToolbar)
+            {
+                while ((((Grid)window.FindName("RepositoryPanel")).Visibility != Visibility.Visible ||
+                        ((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible) && DateTime.UtcNow < deadline) Pump();
+                ((Button)window.FindName("RemoteButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            while ((!shown || ((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible) && DateTime.UtcNow < deadline) Pump();
+            if (!shown || ((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible)
+                throw new TimeoutException("Origin settings did not finish: " + ((TextBlock)window.FindName("NoticeText")).Text);
+            return window;
+        }
     }
 
     private static void RunCancelledOperationSmoke(SettingsStore settings, string fixture)

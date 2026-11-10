@@ -172,6 +172,7 @@ public partial class MainWindow : Window
                     await InspectFileAsync(action == "blame", target: target);
                 }
                 else if (action == "blame") ShowNotice("Blame은 파일 단위로 확인할 수 있습니다. ‘파일 blame…’에서 파일을 선택하세요.");
+                else if (action == "remote") await EditRemoteUrlAsync();
                 else if (action is "update" or "push")
                     await ExecuteAsync(action == "update" ? VcsOperation.Update : VcsOperation.Push);
                 if (action == "commit")
@@ -235,6 +236,8 @@ public partial class MainWindow : Window
         StageButton.Visibility = caps.HasFlag(VcsCapabilities.Stage) ? Visibility.Visible : Visibility.Collapsed;
         UnstageButton.Visibility = caps.HasFlag(VcsCapabilities.Unstage) ? Visibility.Visible : Visibility.Collapsed;
         UpdateButton.IsEnabled = Can(VcsCapabilities.Update);
+        RemoteButton.Visibility = caps.HasFlag(VcsCapabilities.RemoteUrl) ? Visibility.Visible : Visibility.Collapsed;
+        RemoteButton.IsEnabled = Can(VcsCapabilities.RemoteUrl);
         PushButton.Visibility = caps.HasFlag(VcsCapabilities.Push) ? Visibility.Visible : Visibility.Collapsed;
         PushButton.IsEnabled = Can(VcsCapabilities.Push);
         CommitMessage.IsEnabled = Can(VcsCapabilities.Commit);
@@ -528,6 +531,40 @@ public partial class MainWindow : Window
     private async void Commit_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(VcsOperation.Commit);
     private async void Update_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(VcsOperation.Update);
     private async void Push_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(VcsOperation.Push);
+    private async void Remote_Click(object sender, RoutedEventArgs e) => await EditRemoteUrlAsync();
+
+    private async Task EditRemoteUrlAsync()
+    {
+        if (_busy || _repository is null || _provider is null) return;
+        var provider = _provider;
+        var repository = _repository;
+        if (!provider.Capabilities.HasFlag(VcsCapabilities.RemoteUrl))
+        {
+            ShowNotice($"{provider.Name}에서는 앱에서 원격 주소를 변경할 수 없습니다.");
+            return;
+        }
+
+        RemoteInfo? remote = null;
+        await RunBusyAsync("원격 주소를 불러오는 중…", async token =>
+        {
+            remote = await provider.GetRemoteAsync(repository.RootPath, token);
+        });
+        if (remote is null || _provider != provider || _repository?.RootPath != repository.RootPath) return;
+
+        var dialog = new RemoteSettingsWindow(repository.RootPath, remote);
+        if (_showDialog(dialog) != true) return;
+
+        var saved = false;
+        await RunBusyAsync("원격 주소를 저장하는 중…", async token =>
+        {
+            await provider.SetRemoteUrlAsync(repository.RootPath, dialog.Url, remote, token);
+            saved = true;
+        });
+        if (!saved) return;
+
+        Log("origin 주소를 저장했습니다.");
+        await RefreshAsync();
+    }
     private async void ChangesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) { UpdateControls(); await LoadDiffAsync(); }
     private async void StagedDiff_Changed(object sender, RoutedEventArgs e) => await LoadDiffAsync();
     private void CommitMessage_TextChanged(object sender, TextChangedEventArgs e) => UpdateControls();

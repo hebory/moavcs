@@ -7,7 +7,7 @@ public enum VcsCapabilities
 {
     None = 0, Diff = 1, History = 2, Stage = 4, Unstage = 8,
     Commit = 16, Update = 32, Push = 64, Initialize = 128, Clone = 256,
-    Blame = 512, FileComparison = 1024
+    Blame = 512, FileComparison = 1024, RemoteUrl = 2048
 }
 
 public enum VcsOperation { Stage, Unstage, Commit, Update, Push, Initialize, Clone }
@@ -66,6 +66,10 @@ public interface IVcsProvider
         throw new VcsException($"{Name}에서는 아직 파일 비교를 지원하지 않습니다.");
     Task<BlameResult> GetBlameAsync(string root, FileChange file, CancellationToken cancellationToken = default) =>
         throw new VcsException($"{Name}에서는 아직 작성자 이력 보기를 지원하지 않습니다.");
+    Task<RemoteInfo> GetRemoteAsync(string root, CancellationToken cancellationToken = default) =>
+        throw new VcsException($"{Name}에서는 아직 원격 주소 보기를 지원하지 않습니다.");
+    Task SetRemoteUrlAsync(string root, string url, RemoteInfo expected, CancellationToken cancellationToken = default) =>
+        throw new VcsException($"{Name}에서는 아직 원격 주소 변경을 지원하지 않습니다.");
     Task<IReadOnlyList<HistoryEntry>> GetHistoryAsync(string root, CancellationToken cancellationToken = default);
     Task<CommandResult> ExecuteAsync(VcsRequest request, CancellationToken cancellationToken = default);
 }
