@@ -88,7 +88,8 @@ public static class ShellTests
             Check(plan.Any(p => p.KeyPath == menu && p.ValueName == "MUIVerb" && p.Value == "MoaVCS"), "branded cascade label");
             Check(plan.Any(p => p.KeyPath == menu && p.ValueName == "Icon" && p.Value.EndsWith("moavcs.exe\",0", StringComparison.Ordinal)), "cascade icon uses application resource");
             Check(plan.Any(p => p.KeyPath == root && p.ValueName == "MoaVcsExecutable" && p.Value == @"C:\Program Files\Moa Vcs\moavcs.exe"), "uninstall target persists independently of menu ordering");
-            Check(plan.Any(p => p.KeyPath == menu && p.ValueName == "MultiSelectModel" && p.Value == "Single"), "single-target cascade");
+            var selectionModelIsSingle = scope != @"Directory\Background";
+            CheckSelectionModel(plan, menu, selectionModelIsSingle, "cascade " + scope);
             var separators = isFile ? new[] { "30Log", "60Open", "90Settings" } : new[] { "40Log", "90Settings" };
             foreach (var separator in separators)
                 Check(plan.Any(p => p.KeyPath == shell + separator && p.ValueName == "CommandFlags" &&
@@ -102,13 +103,16 @@ public static class ShellTests
             Check(!plan.Any(p => p.KeyPath == shell + expected[0] && p.ValueName == "CommandFlags"), "first submenu item has no separator for " + scope);
             var commands = plan.Where(p => p.KeyPath.StartsWith(shell, StringComparison.Ordinal) && p.KeyPath.EndsWith(@"\command", StringComparison.Ordinal)).ToArray();
             Check(commands.Length == expected.Length, "exact nested action set for " + scope);
+            foreach (var verb in plan.Where(p => p.ValueName == "MUIVerb" && p.KeyPath.StartsWith(shell, StringComparison.Ordinal) &&
+                                                  !p.KeyPath[shell.Length..].Contains('\\')))
+                CheckSelectionModel(plan, verb.KeyPath, selectionModelIsSingle, "submenu verb " + scope);
 
             if (settings.ShowCommitAtTopLevel)
-                CheckQuickVerb(plan, classes + scope + @"\shell\MoaVcs.Commit", executable, "commit", scope == @"Directory\Background" ? "%V" : "%1");
+                CheckQuickVerb(plan, classes + scope + @"\shell\MoaVcs.Commit", executable, "commit", scope == @"Directory\Background" ? "%V" : "%1", selectionModelIsSingle);
             else
                 Check(!plan.Any(p => p.KeyPath.StartsWith(classes + scope + @"\shell\MoaVcs.Commit", StringComparison.Ordinal)), "commit remains nested when promotion is disabled");
             if (!isFile && settings.ShowUpdateAtTopLevel)
-                CheckQuickVerb(plan, classes + scope + @"\shell\MoaVcs.Update", executable, "update", scope == @"Directory\Background" ? "%V" : "%1");
+                CheckQuickVerb(plan, classes + scope + @"\shell\MoaVcs.Update", executable, "update", scope == @"Directory\Background" ? "%V" : "%1", selectionModelIsSingle);
             else
                 Check(!plan.Any(p => p.KeyPath.StartsWith(classes + scope + @"\shell\MoaVcs.Update", StringComparison.Ordinal)), "update is folder-only and nested when promotion is disabled");
         }
@@ -122,14 +126,24 @@ public static class ShellTests
         }
     }
 
-    private static void CheckQuickVerb(IReadOnlyList<RegistryValuePlan> plan, string key, string executable, string action, string target)
+    private static void CheckQuickVerb(IReadOnlyList<RegistryValuePlan> plan, string key, string executable, string action, string target,
+        bool selectionModelIsSingle)
     {
         Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MoaVcsOwner" && !string.IsNullOrWhiteSpace(p.Value)), action + " quick verb has ownership marker");
         Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MoaVcsExecutable" && p.Value == Path.GetFullPath(executable)), action + " quick verb stores executable");
         Check(plan.Any(p => p.KeyPath == key && p.ValueName == "Icon" && p.Value == ExplorerIntegration.QuoteArgument(Path.GetFullPath(executable)) + ",0"), action + " quick verb has app icon");
-        Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MultiSelectModel" && p.Value == "Single"), action + " quick verb is single-target");
+        CheckSelectionModel(plan, key, selectionModelIsSingle, action + " quick verb");
         Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MUIVerb" && !string.IsNullOrWhiteSpace(p.Value)), action + " quick verb has label");
         Check(plan.Any(p => p.KeyPath == key + @"\command" && p.ValueName is null && p.Value.Contains("--action " + action, StringComparison.Ordinal) && p.Value.Contains(target, StringComparison.Ordinal)), action + " quick command gets the correct shell target");
+    }
+
+    private static void CheckSelectionModel(IReadOnlyList<RegistryValuePlan> plan, string key, bool shouldBeSingle, string description)
+    {
+        var values = plan.Where(p => p.KeyPath == key && p.ValueName == "MultiSelectModel").ToArray();
+        Check(shouldBeSingle
+                ? values.Length == 1 && values[0].Value == "Single" && values[0].Kind == Microsoft.Win32.RegistryValueKind.String
+                : values.Length == 0,
+            shouldBeSingle ? description + " requires Single selection" : description + " must omit MultiSelectModel for background menus");
     }
 
     private static void CheckSettingsStore()

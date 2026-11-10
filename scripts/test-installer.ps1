@@ -110,6 +110,18 @@ function Assert-RegistryValue {
     }
 }
 
+function Assert-RegistryValueAbsent {
+    param([string]$KeyPath, [string]$Name)
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($KeyPath)
+    try {
+        if ($null -ne $key -and $key.GetValueNames() -contains $Name) {
+            throw "Unexpected HKCU:\$KeyPath value '$Name'; it must be absent."
+        }
+    } finally {
+        if ($null -ne $key) { $key.Dispose() }
+    }
+}
+
 function Assert-Registration {
     param([string]$ApplicationPath)
     $quotedApplicationPath = [char]34 + $ApplicationPath + [char]34
@@ -117,7 +129,11 @@ function Assert-Registration {
         Assert-RegistryValue $menu.Menu "MUIVerb" "MoaVCS" ([Microsoft.Win32.RegistryValueKind]::String)
         Assert-RegistryValue $menu.Menu "MoaVcsOwner" "MoaVcs.ExplorerMenu.v1" ([Microsoft.Win32.RegistryValueKind]::String)
         Assert-RegistryValue $menu.Menu "Icon" ($quotedApplicationPath + ",0") ([Microsoft.Win32.RegistryValueKind]::String)
-        Assert-RegistryValue $menu.Menu "MultiSelectModel" "Single" ([Microsoft.Win32.RegistryValueKind]::String)
+        if ($menu.Name -eq "background") {
+            Assert-RegistryValueAbsent $menu.Menu "MultiSelectModel"
+        } else {
+            Assert-RegistryValue $menu.Menu "MultiSelectModel" "Single" ([Microsoft.Win32.RegistryValueKind]::String)
+        }
         Assert-RegistryValue $menu.Menu "ExtendedSubCommandsKey" $menu.Commands.Substring('Software\Classes\'.Length) ([Microsoft.Win32.RegistryValueKind]::String)
 
         Assert-RegistryValue $menu.Commands "MoaVcsOwner" "MoaVcs.ExplorerMenu.v1" ([Microsoft.Win32.RegistryValueKind]::String)
@@ -145,8 +161,12 @@ function Assert-Registration {
                 if ($verb.ContainsKey("Label") -and $labelKey.GetValue("MUIVerb") -cne $verb.Label) {
                     throw "Unexpected label for $($menu.Name) verb $($verb.Id)."
                 }
-                if ($labelKey.GetValue("MultiSelectModel") -cne "Single" -or
-                    $labelKey.GetValueKind("MultiSelectModel") -ne [Microsoft.Win32.RegistryValueKind]::String) {
+                if ($menu.Name -eq "background") {
+                    if ($labelKey.GetValueNames() -contains "MultiSelectModel") {
+                        throw "Background verb $($verb.Id) must omit MultiSelectModel."
+                    }
+                } elseif ($labelKey.GetValue("MultiSelectModel") -cne "Single" -or
+                          $labelKey.GetValueKind("MultiSelectModel") -ne [Microsoft.Win32.RegistryValueKind]::String) {
                     throw "Expected Single selection on $($menu.Name) verb $($verb.Id)."
                 }
                 if ($verb.Separator) {
@@ -172,7 +192,11 @@ function Assert-Registration {
         Assert-RegistryValue $quick.Root "MoaVcsOwner" "MoaVcs.ExplorerMenu.v1" ([Microsoft.Win32.RegistryValueKind]::String)
         Assert-RegistryValue $quick.Root "MoaVcsExecutable" $ApplicationPath ([Microsoft.Win32.RegistryValueKind]::String)
         Assert-RegistryValue $quick.Root "Icon" ($quotedApplicationPath + ",0") ([Microsoft.Win32.RegistryValueKind]::String)
-        Assert-RegistryValue $quick.Root "MultiSelectModel" "Single" ([Microsoft.Win32.RegistryValueKind]::String)
+        if ($quick.Root.StartsWith("Software\Classes\Directory\Background\", [StringComparison]::OrdinalIgnoreCase)) {
+            Assert-RegistryValueAbsent $quick.Root "MultiSelectModel"
+        } else {
+            Assert-RegistryValue $quick.Root "MultiSelectModel" "Single" ([Microsoft.Win32.RegistryValueKind]::String)
+        }
         $expectedCommand = "$quotedApplicationPath --shell-path `"$($quick.Target)|`" --action $($quick.Action)"
         Assert-RegistryValue "$($quick.Root)\command" "" $expectedCommand ([Microsoft.Win32.RegistryValueKind]::String)
     }
@@ -236,6 +260,17 @@ function Assert-QuickActionsDemoted {
             $expectedCommand = "$quotedApplicationPath --shell-path `"$($menu.Target)|`" --action $($verb.Action)"
             Assert-RegistryValue "$($menu.Commands)\Shell\$($verb.Id)\command" "" $expectedCommand `
                 ([Microsoft.Win32.RegistryValueKind]::String)
+        }
+        if ($menu.Name -eq "background") {
+            Assert-RegistryValueAbsent $menu.Menu "MultiSelectModel"
+            foreach ($verb in $demoted) {
+                Assert-RegistryValueAbsent "$($menu.Commands)\Shell\$($verb.Id)" "MultiSelectModel"
+            }
+        } else {
+            foreach ($verb in $demoted) {
+                Assert-RegistryValue "$($menu.Commands)\Shell\$($verb.Id)" "MultiSelectModel" "Single" `
+                    ([Microsoft.Win32.RegistryValueKind]::String)
+            }
         }
     }
 }
@@ -303,6 +338,27 @@ try {
         $nested = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("$root\Shell\60Repository\Commands\Shell\10Open\command")
         try { $nested.SetValue("", "legacy nested action", [Microsoft.Win32.RegistryValueKind]::String) }
         finally { $nested.Dispose() }
+    }
+    # Reproduce the bug: prior registrations wrote Single to background verbs and quick entries.
+    $staleBackgroundKeys = @(
+        $menuPaths[1],
+        "$($commandRoots[1])\Shell\10Update",
+        "$($commandRoots[1])\Shell\20Push",
+        "$($commandRoots[1])\Shell\30Commit",
+        "$($commandRoots[1])\Shell\40Log",
+        "$($commandRoots[1])\Shell\50Status",
+        "$($commandRoots[1])\Shell\60Open",
+        "$($commandRoots[1])\Shell\70Clone",
+        "$($commandRoots[1])\Shell\80Init",
+        "$($commandRoots[1])\Shell\85Remote",
+        "$($commandRoots[1])\Shell\90Settings",
+        $quickRoots[2],
+        $quickRoots[3]
+    )
+    foreach ($path in $staleBackgroundKeys) {
+        $stale = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($path)
+        try { $stale.SetValue("MultiSelectModel", "Single", [Microsoft.Win32.RegistryValueKind]::String) }
+        finally { $stale.Dispose() }
     }
     $register = Start-Process -FilePath $app -ArgumentList @("--install-context-menu", "--headless") -Wait -PassThru -WindowStyle Hidden
     if ($register.ExitCode -ne 0) { throw "Menu upgrade registration returned exit code $($register.ExitCode)." }

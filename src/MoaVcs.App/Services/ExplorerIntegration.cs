@@ -1,12 +1,15 @@
 using System.IO;
 using Microsoft.Win32;
 using System.Security;
+using System.Runtime.InteropServices;
 
 namespace MoaVcs.App.Services;
 
 /// <summary>Optional, per-user Windows Explorer integration. It is never installed automatically.</summary>
 public static class ExplorerIntegration
 {
+    private const uint ShellAssociationChanged = 0x08000000;
+    private const uint ShellNotifyIdList = 0x0000;
     private const string Owner = "MoaVcs.ExplorerMenu.v1";
     private const string MenuName = "MoaVcs";
     private const string MenuLabel = "MoaVCS";
@@ -57,7 +60,8 @@ public static class ExplorerIntegration
             values.Add(new(menuPath, "MoaVcsOwner", Owner));
             values.Add(new(menuPath, "ExtendedSubCommandsKey", CommandKeyName(scope)));
             values.Add(new(menuPath, "Icon", QuoteArgument(exe) + ",0"));
-            values.Add(new(menuPath, "MultiSelectModel", "Single"));
+            if (scope != "Directory\\Background")
+                values.Add(new(menuPath, "MultiSelectModel", "Single"));
         }
         foreach (var scope in Scopes)
         {
@@ -70,7 +74,9 @@ public static class ExplorerIntegration
                     entry.Action == "update" && settings.ShowUpdateAtTopLevel;
                 var verb = promoted ? QuickMenuPath(scope, entry.Action) : CommandRoot(scope) + "\\Shell\\" + entry.Id;
                 values.Add(new(verb, "MUIVerb", promoted ? "MoaVCS " + entry.Label : entry.Label));
-                values.Add(new(verb, "MultiSelectModel", "Single"));
+                // A background menu has no selected item; Single would hide these verbs.
+                if (scope != "Directory\\Background")
+                    values.Add(new(verb, "MultiSelectModel", "Single"));
                 if (promoted)
                 {
                     values.Add(new(verb, "MoaVcsOwner", Owner));
@@ -149,12 +155,25 @@ public static class ExplorerIntegration
         catch
         {
             // Roll back only keys carrying our ownership marker.
-            UninstallOwnedKeys();
+            try { UninstallOwnedKeys(); }
+            finally { NotifyShell(); }
             throw;
         }
+
+        NotifyShell();
     }
 
-    public static void Uninstall(string? expectedExecutable = null) => UninstallOwnedKeys(expectedExecutable);
+    public static void Uninstall(string? expectedExecutable = null)
+    {
+        UninstallOwnedKeys(expectedExecutable);
+        NotifyShell();
+    }
+
+    private static void NotifyShell() => SHChangeNotify(
+        ShellAssociationChanged, ShellNotifyIdList, IntPtr.Zero, IntPtr.Zero);
+
+    [DllImport("shell32.dll", ExactSpelling = true)]
+    private static extern void SHChangeNotify(uint eventId, uint flags, IntPtr item1, IntPtr item2);
 
     private static void UninstallOwnedKeys(string? expectedExecutable = null)
     {
