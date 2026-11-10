@@ -32,7 +32,7 @@ $env:MOAVCS_LORE_EXE = .\scripts\get-test-lore.ps1
 
 - --path <폴더 또는 파일>: 열 경로
 - --vcs Git|Svn|Perforce|Lore: 감지된 유형 대신 명시적인 유형 선택
-- --action open|status|diff|blame|log|commit: 탐색기 메뉴 작업
+- --action open|status|diff|blame|log|commit|update|push|clone|init|settings: 탐색기 메뉴 작업. update/push는 저장소를 연 뒤 확인창을 표시하며, clone/init/settings는 해당 대화상자를 바로 엽니다.
 - --install-context-menu 및 --uninstall-context-menu: 현재 사용자 셸 메뉴 등록 관리
 - --headless: 위 메뉴 등록·제거 명령을 설치 프로그램에서 창 없이 실행하고 종료. 실패 시 종료 코드 1과 %LOCALAPPDATA%\MoaVcs\setup-error.log를 남깁니다.
 

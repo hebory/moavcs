@@ -43,7 +43,7 @@ Lore 0.13.0 이상에서도 내장 좌우 diff와 Blame을 사용할 수 있습�
     .\artifacts\publish\win-x64\moavcs.exe --install-context-menu
     .\artifacts\publish\win-x64\moavcs.exe --uninstall-context-menu
 
-폴더, 폴더 배경과 파일 메뉴에 moavcs 하위 메뉴가 추가됩니다. Windows 11은 고전 Win32 탐색기 메뉴를 **더 많은 옵션 표시** 아래에 보여줄 수 있습니다. 자세한 내용은 [탐색기 메뉴 안내](docs/explorer-integration.md)를 참고하세요.
+폴더와 폴더 배경의 **MoaVCS** 메뉴에는 상태·커밋·업데이트·푸시와 저장소 관리 하위 메뉴가 있습니다. 파일 메뉴에는 Diff·Blame을 먼저 표시합니다. 작업 그룹은 구분선으로 나누며, 복제·생성·설정 대화상자도 바로 열 수 있습니다. 업데이트 후 **메뉴 등록 / 갱신**으로 기존 구성을 교체하세요. Windows 11은 고전 Win32 탐색기 메뉴를 **더 많은 옵션 표시** 아래에 보여줄 수 있습니다. 자세한 내용은 [탐색기 메뉴 안내](docs/explorer-integration.md)를 참고하세요.
 
 ## Moa Launcher 이미지
 
