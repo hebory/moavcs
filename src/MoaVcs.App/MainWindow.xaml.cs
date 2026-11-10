@@ -57,8 +57,8 @@ public partial class MainWindow : Window
         {
             try
             {
-                if (_launchOptions.InstallContextMenu) ExplorerIntegration.Install(GetExecutablePath());
-                else ExplorerIntegration.Uninstall();
+                if (_launchOptions.InstallContextMenu) ExplorerIntegration.Install(GetExecutablePath(), _settings.ExplorerMenu);
+                else ExplorerIntegration.Uninstall(GetExecutablePath());
                 ShowNotice(_launchOptions.InstallContextMenu ? "탐색기 MoaVCS 메뉴를 등록했습니다." : "탐색기 MoaVCS 메뉴를 제거했습니다.");
             }
             catch (Exception ex) { ShowNotice(ex.Message); }

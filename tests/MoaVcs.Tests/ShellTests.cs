@@ -26,19 +26,28 @@ public static class ShellTests
 
         Check(ExplorerIntegration.QuoteArgument(@"C:\Program Files\moavcs\moavcs.exe") == @"""C:\Program Files\moavcs\moavcs.exe""", "quoted executable paths");
         Check(ExplorerIntegration.QuoteArgument(@"C:\moavcs\moavcs.exe") == @"C:\moavcs\moavcs.exe", "simple executable paths");
-        var plan = ExplorerIntegration.BuildRegistrationPlan(@"C:\Program Files\Moa Vcs\moavcs.exe");
-        Check(plan.Any(p => p.KeyPath.Contains(@"Directory\ContextMenus\MoaVcs.BackgroundCommands", StringComparison.Ordinal) && p.Value.Contains("%V", StringComparison.Ordinal)), "background commands use shell background path");
-        Check(plan.Count(p => p.Value.Contains("--action diff", StringComparison.Ordinal)) == 1 &&
-            plan.Single(p => p.Value.Contains("--action diff", StringComparison.Ordinal)).KeyPath.Contains(@"MoaVcs.FileCommands\Shell\10Diff\command", StringComparison.Ordinal), "diff is a file-only command");
-        Check(plan.Any(p => p.Value.Contains("--action commit", StringComparison.Ordinal)), "commit command is registered");
-        Check(plan.Count(p => p.Value.Contains("--action blame", StringComparison.Ordinal)) == 1 &&
-            plan.Single(p => p.Value.Contains("--action blame", StringComparison.Ordinal)).KeyPath.Contains("MoaVcs.FileCommands", StringComparison.Ordinal), "blame is registered only for files");
+        const string executable = @"C:\Program Files\Moa Vcs\moavcs.exe";
+        var defaults = new ExplorerMenuSettings();
+        Check(defaults.ShowCommitAtTopLevel && defaults.ShowUpdateAtTopLevel, "menu promotes Commit and Update by default");
+        var plan = ExplorerIntegration.BuildRegistrationPlan(executable);
+        CheckMenuLayout(plan, executable, defaults);
+        Check(plan.Count(p => p.ValueName is null && p.KeyPath.EndsWith(@"\command", StringComparison.Ordinal) && p.Value.Contains("--action diff", StringComparison.Ordinal)) == 1,
+            "Diff remains file-only");
+        Check(plan.Count(p => p.ValueName is null && p.KeyPath.EndsWith(@"\command", StringComparison.Ordinal) && p.Value.Contains("--action blame", StringComparison.Ordinal)) == 1 &&
+              plan.Single(p => p.ValueName is null && p.KeyPath.EndsWith(@"\command", StringComparison.Ordinal) && p.Value.Contains("--action blame", StringComparison.Ordinal)).KeyPath.Contains("MoaVcs.FileCommands", StringComparison.Ordinal),
+            "Blame remains file-only");
         Check(plan.Where(p => p.Value.Contains("--shell-path", StringComparison.Ordinal)).All(p => p.Value.Contains("\"%1|\"", StringComparison.Ordinal) || p.Value.Contains("\"%V|\"", StringComparison.Ordinal)), "shell substitutions include a safe trailing sentinel");
-        CheckMenuLayout(plan);
-        var dangerous = ExplorerIntegration.BuildRegistrationPlan(@"C:\repo & echo pwned\moavcs.exe").Last(p => p.Value.Contains("--action commit", StringComparison.Ordinal));
-        Check(dangerous.Value.StartsWith("\"C:\\repo & echo pwned\\moavcs.exe\"", StringComparison.Ordinal), "metacharacters stay inside quoted executable name");
+        var noPromotions = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = false };
+        CheckMenuLayout(ExplorerIntegration.BuildRegistrationPlan(executable, noPromotions), executable, noPromotions);
+        var onlyUpdate = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = true };
+        CheckMenuLayout(ExplorerIntegration.BuildRegistrationPlan(executable, onlyUpdate), executable, onlyUpdate);
+        var onlyCommit = new ExplorerMenuSettings { ShowCommitAtTopLevel = true, ShowUpdateAtTopLevel = false };
+        CheckMenuLayout(ExplorerIntegration.BuildRegistrationPlan(executable, onlyCommit), executable, onlyCommit);
+        var dangerousPlan = ExplorerIntegration.BuildRegistrationPlan(@"C:\repo & echo pwned\moavcs.exe");
+        var dangerous = dangerousPlan.Single(p => p.KeyPath == @"Software\Classes\Directory\shell\MoaVcs.Commit\command");
+        Check(dangerous.Value.StartsWith("\"C:\\repo & echo pwned\\moavcs.exe\"", StringComparison.Ordinal), "quick command quotes executable metacharacters");
 
-        var open = plan.First(p => p.KeyPath.EndsWith(@"\10Open\command", StringComparison.Ordinal) && p.KeyPath.Contains(@"\Directory\ContextMenus\", StringComparison.Ordinal));
+        var open = plan.First(p => p.ValueName is null && p.KeyPath.EndsWith(@"\60Open\command", StringComparison.Ordinal) && p.KeyPath.Contains(@"MoaVcs.Commands\", StringComparison.Ordinal));
         var rootInvocation = open.Value.Replace("%1", @"C:\", StringComparison.Ordinal);
         var parsed = ParseWindowsCommandLine(rootInvocation);
         var launch = LaunchOptions.Parse(parsed.Skip(1).ToArray());
@@ -51,7 +60,7 @@ public static class ShellTests
         return Task.CompletedTask;
     }
 
-    private static void CheckMenuLayout(IReadOnlyList<RegistryValuePlan> plan)
+    private static void CheckMenuLayout(IReadOnlyList<RegistryValuePlan> plan, string executable, ExplorerMenuSettings settings)
     {
         const string classes = @"Software\Classes\";
         foreach (var (scope, commandKey) in new[]
@@ -65,9 +74,12 @@ public static class ShellTests
             var root = classes + commandKey;
             var shell = root + @"\Shell\";
             var isFile = scope == "*";
-            var expected = isFile
-                ? new[] { "10Diff", "20Blame", "30Log", "40Status", "50Commit", "60Open", "70Settings" }
-                : new[] { "10Status", "20Commit", "30Update", "40Push", "50Log", "60Repository", "70Settings" };
+            var allEntries = isFile
+                ? new[] { "10Commit", "20Diff", "30Log", "40Blame", "50Status", "60Open", "90Settings" }
+                : new[] { "10Update", "20Push", "30Commit", "40Log", "50Status", "60Open", "70Clone", "80Init", "90Settings" };
+            var expected = allEntries.Where(id =>
+                !((id == "10Commit" || id == "30Commit") && settings.ShowCommitAtTopLevel) &&
+                !(id == "10Update" && !isFile && settings.ShowUpdateAtTopLevel)).ToArray();
             var top = plan.Where(p => p.ValueName == "MUIVerb" && p.KeyPath.StartsWith(shell, StringComparison.Ordinal) &&
                                      !p.KeyPath[shell.Length..].Contains('\\')).ToArray();
             Check(top.Select(p => p.KeyPath[shell.Length..]).SequenceEqual(expected), "workflow ordering for " + scope);
@@ -75,28 +87,43 @@ public static class ShellTests
             Check(plan.Any(p => p.KeyPath == menu && p.ValueName == "Icon" && p.Value.EndsWith("moavcs.exe\",0", StringComparison.Ordinal)), "cascade icon uses application resource");
             Check(plan.Any(p => p.KeyPath == root && p.ValueName == "MoaVcsExecutable" && p.Value == @"C:\Program Files\Moa Vcs\moavcs.exe"), "uninstall target persists independently of menu ordering");
             Check(plan.Any(p => p.KeyPath == menu && p.ValueName == "MultiSelectModel" && p.Value == "Single"), "single-target cascade");
-            var separators = isFile ? new[] { "40Status", "60Open", "70Settings" } : new[] { "50Log", "60Repository", "70Settings" };
+            var separators = isFile ? new[] { "30Log", "60Open", "90Settings" } : new[] { "40Log", "90Settings" };
             foreach (var separator in separators)
                 Check(plan.Any(p => p.KeyPath == shell + separator && p.ValueName == "CommandFlags" &&
                                     p.Kind == Microsoft.Win32.RegistryValueKind.DWord && p.Value == "32"), "typed group separator");
-            if (!isFile)
-            {
-                var nested = commandKey + @"\Shell\60Repository\Commands";
-                Check(plan.Any(p => p.KeyPath == shell + "60Repository" && p.ValueName == "ExtendedSubCommandsKey" && p.Value == nested), "repository submenu resolves its own command tree");
-                foreach (var action in new[] { "open", "clone", "init" })
-                    Check(plan.Any(p => p.KeyPath.StartsWith(classes + nested + @"\Shell\", StringComparison.Ordinal) && p.Value.EndsWith("--action " + action, StringComparison.Ordinal)), "repository submenu action " + action);
-            }
+            Check(!plan.Any(p => p.KeyPath.Contains(@"\60Repository", StringComparison.Ordinal) ||
+                                p.ValueName == "ExtendedSubCommandsKey" && p.Value.Contains("Repository", StringComparison.Ordinal)), "menu has no nested Repository submenu");
+            Check(!plan.Any(p => p.KeyPath == shell + expected[0] && p.ValueName == "CommandFlags"), "first submenu item has no separator for " + scope);
             var commands = plan.Where(p => p.KeyPath.StartsWith(shell, StringComparison.Ordinal) && p.KeyPath.EndsWith(@"\command", StringComparison.Ordinal)).ToArray();
-            Check(commands.Length == (isFile ? 7 : 9), "exact action set for " + scope);
-            foreach (var command in commands)
-            {
-                var verb = command.KeyPath[..^@"\command".Length];
-                Check(plan.Any(p => p.KeyPath == verb && p.ValueName == "MultiSelectModel" && p.Value == "Single"), "single-target leaf verb");
-                var parsed = ParseWindowsCommandLine(command.Value.Replace(isFile || scope == "Directory" ? "%1" : "%V", @"C:\Work & Notes\한글\", StringComparison.Ordinal));
-                var options = LaunchOptions.Parse(parsed.Skip(1).ToArray());
-                Check(options.Path == @"C:\Work & Notes\한글\", "every menu command preserves literal shell target");
-            }
+            Check(commands.Length == expected.Length, "exact nested action set for " + scope);
+
+            if (settings.ShowCommitAtTopLevel)
+                CheckQuickVerb(plan, classes + scope + @"\shell\MoaVcs.Commit", executable, "commit", scope == @"Directory\Background" ? "%V" : "%1");
+            else
+                Check(!plan.Any(p => p.KeyPath.StartsWith(classes + scope + @"\shell\MoaVcs.Commit", StringComparison.Ordinal)), "commit remains nested when promotion is disabled");
+            if (!isFile && settings.ShowUpdateAtTopLevel)
+                CheckQuickVerb(plan, classes + scope + @"\shell\MoaVcs.Update", executable, "update", scope == @"Directory\Background" ? "%V" : "%1");
+            else
+                Check(!plan.Any(p => p.KeyPath.StartsWith(classes + scope + @"\shell\MoaVcs.Update", StringComparison.Ordinal)), "update is folder-only and nested when promotion is disabled");
         }
+
+        foreach (var command in plan.Where(p => p.ValueName is null && p.KeyPath.EndsWith(@"\command", StringComparison.Ordinal)))
+        {
+            var parsed = ParseWindowsCommandLine(command.Value.Replace("%1", @"C:\Work & Notes\한글\", StringComparison.Ordinal)
+                .Replace("%V", @"C:\Work & Notes\한글\", StringComparison.Ordinal));
+            var options = LaunchOptions.Parse(parsed.Skip(1).ToArray());
+            Check(options.Path == @"C:\Work & Notes\한글\", "every menu command preserves literal shell target");
+        }
+    }
+
+    private static void CheckQuickVerb(IReadOnlyList<RegistryValuePlan> plan, string key, string executable, string action, string target)
+    {
+        Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MoaVcsOwner" && !string.IsNullOrWhiteSpace(p.Value)), action + " quick verb has ownership marker");
+        Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MoaVcsExecutable" && p.Value == Path.GetFullPath(executable)), action + " quick verb stores executable");
+        Check(plan.Any(p => p.KeyPath == key && p.ValueName == "Icon" && p.Value == ExplorerIntegration.QuoteArgument(Path.GetFullPath(executable)) + ",0"), action + " quick verb has app icon");
+        Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MultiSelectModel" && p.Value == "Single"), action + " quick verb is single-target");
+        Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MUIVerb" && !string.IsNullOrWhiteSpace(p.Value)), action + " quick verb has label");
+        Check(plan.Any(p => p.KeyPath == key + @"\command" && p.ValueName is null && p.Value.Contains("--action " + action, StringComparison.Ordinal) && p.Value.Contains(target, StringComparison.Ordinal)), action + " quick command gets the correct shell target");
     }
 
     private static void CheckSettingsStore()
@@ -109,17 +136,49 @@ public static class ShellTests
             store.Save(new AppSettings
             {
                 RecentRepositories = [new RecentRepository(@"C:\Work Area\repo", VcsKind.Git)],
-                ExecutablePaths = new Dictionary<VcsKind, string> { [VcsKind.Perforce] = @"C:\Tools\p4.exe" }
+                ExecutablePaths = new Dictionary<VcsKind, string> { [VcsKind.Perforce] = @"C:\Tools\p4.exe" },
+                ExternalTools = new Dictionary<ExternalToolKind, ExternalToolSettings>
+                {
+                    [ExternalToolKind.Diff] = new() { UseExternal = true, ExecutablePath = @"C:\Tools\diff.exe", ArgumentTemplates = ["{left}", "{right}"] }
+                },
+                ExplorerMenu = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = true }
             });
             var roundTrip = store.Load();
             Check(roundTrip.RecentRepositories.Single().Path == @"C:\Work Area\repo", "settings persist recent paths");
             Check(roundTrip.ExecutablePaths[VcsKind.Perforce] == @"C:\Tools\p4.exe", "settings persist executable paths");
+            Check(!roundTrip.ExplorerMenu.ShowCommitAtTopLevel && roundTrip.ExplorerMenu.ShowUpdateAtTopLevel, "explorer menu preferences round-trip");
+
+            store.SaveExplorerMenu(new ExplorerMenuSettings { ShowCommitAtTopLevel = true, ShowUpdateAtTopLevel = false });
+            var menuSaved = store.Load();
+            Check(menuSaved.ExplorerMenu.ShowCommitAtTopLevel && !menuSaved.ExplorerMenu.ShowUpdateAtTopLevel, "saving explorer menu preferences updates both toggles");
+            Check(menuSaved.RecentRepositories.Single().Path == @"C:\Work Area\repo" && menuSaved.ExecutablePaths[VcsKind.Perforce] == @"C:\Tools\p4.exe",
+                "saving explorer menu preferences preserves recent repositories and executable paths");
+            Check(menuSaved.ExternalTools[ExternalToolKind.Diff].UseExternal &&
+                  menuSaved.ExternalTools[ExternalToolKind.Diff].ExecutablePath == @"C:\Tools\diff.exe" &&
+                  menuSaved.ExternalTools[ExternalToolKind.Diff].ArgumentTemplates.SequenceEqual(["{left}", "{right}"]),
+                "saving explorer menu preferences preserves external tool settings");
 
             const string invalid = "{ this is not valid JSON";
             File.WriteAllText(file, invalid);
             var recovered = store.Load();
             Check(recovered.RecentRepositories.Count == 0 && !string.IsNullOrWhiteSpace(store.LoadWarning), "bad settings recover with a warning");
             Check(File.ReadAllText(file) == invalid, "bad settings remain available for recovery");
+            Throws<IOException>(() => store.SaveExplorerMenu(new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = false }),
+                "menu settings do not overwrite corrupt settings");
+            Check(File.ReadAllText(file) == invalid, "failed menu-only save leaves corrupt settings intact");
+
+            File.WriteAllText(file, "{\"RecentRepositories\":[],\"ExecutablePaths\":{},\"ExternalTools\":{}}");
+            var legacy = store.Load();
+            Check(store.LoadWarning is null && legacy.ExplorerMenu.ShowCommitAtTopLevel && legacy.ExplorerMenu.ShowUpdateAtTopLevel,
+                "settings written before menu preferences receive new defaults");
+            File.WriteAllText(file, "{\"ExplorerMenu\":null}");
+            var nullMenu = store.Load();
+            Check(store.LoadWarning is null && nullMenu.ExplorerMenu.ShowCommitAtTopLevel && nullMenu.ExplorerMenu.ShowUpdateAtTopLevel,
+                "a null menu settings object recovers to defaults");
+            File.WriteAllText(file, "{\"ExplorerMenu\":{}}");
+            var partialMenu = store.Load();
+            Check(store.LoadWarning is null && partialMenu.ExplorerMenu.ShowCommitAtTopLevel && partialMenu.ExplorerMenu.ShowUpdateAtTopLevel,
+                "missing menu preference fields use their defaults");
         }
         finally
         {

@@ -17,11 +17,18 @@ public sealed class ExternalToolSettings
     public List<string> ArgumentTemplates { get; set; } = [];
 }
 
+public sealed class ExplorerMenuSettings
+{
+    public bool ShowCommitAtTopLevel { get; set; } = true;
+    public bool ShowUpdateAtTopLevel { get; set; } = true;
+}
+
 public sealed class AppSettings
 {
     public List<RecentRepository> RecentRepositories { get; set; } = [];
     public Dictionary<VcsKind, string> ExecutablePaths { get; set; } = [];
     public Dictionary<ExternalToolKind, ExternalToolSettings> ExternalTools { get; set; } = [];
+    public ExplorerMenuSettings ExplorerMenu { get; set; } = new();
 }
 
 /// <summary>Persists per-user preferences without requiring administrator access.</summary>
@@ -50,6 +57,7 @@ public sealed class SettingsStore
             loaded.RecentRepositories ??= [];
             loaded.ExecutablePaths ??= [];
             loaded.ExternalTools ??= [];
+            loaded.ExplorerMenu ??= new ExplorerMenuSettings();
             foreach (var kind in Enum.GetValues<ExternalToolKind>())
             {
                 if (!loaded.ExternalTools.TryGetValue(kind, out var tool) || tool is null)
@@ -94,6 +102,20 @@ public sealed class SettingsStore
         {
             if (File.Exists(tempPath)) File.Delete(tempPath);
         }
+    }
+
+    public void SaveExplorerMenu(ExplorerMenuSettings explorerMenu)
+    {
+        ArgumentNullException.ThrowIfNull(explorerMenu);
+        var settings = Load();
+        if (LoadWarning is { } warning)
+            throw new IOException("설정 파일을 읽을 수 없어 탐색기 메뉴 설정을 저장하지 않았습니다. " + warning);
+        settings.ExplorerMenu = new ExplorerMenuSettings
+        {
+            ShowCommitAtTopLevel = explorerMenu.ShowCommitAtTopLevel,
+            ShowUpdateAtTopLevel = explorerMenu.ShowUpdateAtTopLevel
+        };
+        Save(settings);
     }
 
     private static JsonSerializerOptions CreateJsonOptions()

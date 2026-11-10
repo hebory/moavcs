@@ -11,43 +11,42 @@ public static class ExplorerIntegration
     private const string MenuName = "MoaVcs";
     private const string MenuLabel = "MoaVCS";
     private static readonly string[] Scopes = ["Directory", "Directory\\Background", "*"];
-    private sealed record MenuEntry(string Id, string Label, string? Action = null, bool Separator = false, MenuEntry[]? Children = null);
+    private sealed record MenuEntry(string Id, string Label, string Action, bool Separator = false);
     private static readonly MenuEntry[] FolderMenu =
     [
-        new("10Status", "변경 사항 확인", "status"),
-        new("20Commit", "커밋…", "commit"),
-        new("30Update", "업데이트 / Pull…", "update"),
-        new("40Push", "푸시…", "push"),
-        new("50Log", "저장소 이력 보기", "log", Separator: true),
-        new("60Repository", "저장소", Separator: true, Children:
-        [
-            new("10Open", "MoaVCS에서 열기", "open"),
-            new("20Clone", "저장소 복제 / 체크아웃…", "clone"),
-            new("30Init", "여기에 저장소 만들기…", "init")
-        ]),
-        new("70Settings", "도구 및 탐색기 설정…", "settings", Separator: true)
+        new("10Update", "업데이트 / Pull…", "update"),
+        new("20Push", "푸시…", "push"),
+        new("30Commit", "커밋…", "commit"),
+        new("40Log", "로그 보기", "log", Separator: true),
+        new("50Status", "변경 사항 확인", "status"),
+        new("60Open", "MoaVCS에서 열기", "open", Separator: true),
+        new("70Clone", "복제 / 체크아웃…", "clone"),
+        new("80Init", "여기에 저장소 만들기…", "init"),
+        new("90Settings", "설정…", "settings", Separator: true)
     ];
     private static readonly MenuEntry[] FileMenu =
     [
-        new("10Diff", "변경 내용 비교", "diff"),
-        new("20Blame", "행별 이력 (Blame)", "blame"),
-        new("30Log", "저장소 이력 보기", "log"),
-        new("40Status", "변경 사항 확인", "status", Separator: true),
-        new("50Commit", "커밋…", "commit"),
+        new("10Commit", "커밋…", "commit"),
+        new("20Diff", "차이 비교 (Diff)", "diff", Separator: true),
+        new("30Log", "로그 보기", "log", Separator: true),
+        new("40Blame", "행별 이력 (Blame)", "blame"),
+        new("50Status", "변경 사항 확인", "status"),
         new("60Open", "MoaVCS에서 열기", "open", Separator: true),
-        new("70Settings", "도구 및 탐색기 설정…", "settings", Separator: true)
+        new("90Settings", "설정…", "settings", Separator: true)
     ];
 
-    public static bool IsInstalled()
+    public static bool IsInstalled(string? expectedExecutable = null)
     {
         using var key = Registry.CurrentUser.OpenSubKey(MenuPath("Directory"), writable: false);
-        return string.Equals(key?.GetValue("MoaVcsOwner") as string, Owner, StringComparison.Ordinal);
+        return string.Equals(key?.GetValue("MoaVcsOwner") as string, Owner, StringComparison.Ordinal) &&
+            (expectedExecutable is null || CommandTargetsExecutable("Directory", expectedExecutable));
     }
 
-    public static IReadOnlyList<RegistryValuePlan> BuildRegistrationPlan(string executablePath)
+    public static IReadOnlyList<RegistryValuePlan> BuildRegistrationPlan(string executablePath, ExplorerMenuSettings? settings = null)
     {
         if (string.IsNullOrWhiteSpace(executablePath)) throw new ArgumentException("앱 경로가 필요합니다.", nameof(executablePath));
         var exe = Path.GetFullPath(executablePath);
+        settings ??= new ExplorerMenuSettings();
         var values = new List<RegistryValuePlan>();
         foreach (var scope in Scopes)
         {
@@ -62,35 +61,39 @@ public static class ExplorerIntegration
         {
             values.Add(new(CommandRoot(scope), "MoaVcsOwner", Owner));
             values.Add(new(CommandRoot(scope), "MoaVcsExecutable", exe));
-            AddEntries(CommandRoot(scope) + "\\Shell", scope == "*" ? FileMenu : FolderMenu, scope);
+            var firstSubmenuEntry = true;
+            foreach (var entry in scope == "*" ? FileMenu : FolderMenu)
+            {
+                var promoted = entry.Action == "commit" && settings.ShowCommitAtTopLevel ||
+                    entry.Action == "update" && settings.ShowUpdateAtTopLevel;
+                var verb = promoted ? QuickMenuPath(scope, entry.Action) : CommandRoot(scope) + "\\Shell\\" + entry.Id;
+                values.Add(new(verb, "MUIVerb", promoted ? "MoaVCS " + entry.Label : entry.Label));
+                values.Add(new(verb, "MultiSelectModel", "Single"));
+                if (promoted)
+                {
+                    values.Add(new(verb, "MoaVcsOwner", Owner));
+                    values.Add(new(verb, "MoaVcsExecutable", exe));
+                    values.Add(new(verb, "Icon", QuoteArgument(exe) + ",0"));
+                }
+                else
+                {
+                    // Do not leave a leading separator when a command moves to the first level.
+                    if (entry.Separator && !firstSubmenuEntry)
+                        values.Add(new(verb, "CommandFlags", "32", RegistryValueKind.DWord));
+                    firstSubmenuEntry = false;
+                }
+                AddCommand(verb, entry.Action, scope);
+            }
         }
         return values;
 
-        void AddEntries(string commands, IEnumerable<MenuEntry> entries, string scope)
+        void AddCommand(string verb, string action, string scope)
         {
-            foreach (var entry in entries)
-            {
-                // Stable ordinal keys keep the classic cascade in workflow order.
-                var verb = commands + "\\" + entry.Id;
-                values.Add(new(verb, "MUIVerb", entry.Label));
-                values.Add(new(verb, "MultiSelectModel", "Single"));
-                if (entry.Separator) values.Add(new(verb, "CommandFlags", "32", RegistryValueKind.DWord));
-                if (entry.Children is { } children)
-                {
-                    var nestedRoot = verb + "\\Commands";
-                    values.Add(new(verb, "ExtendedSubCommandsKey", nestedRoot["Software\\Classes\\".Length..]));
-                    AddEntries(nestedRoot + "\\Shell", children, scope);
-                    continue;
-                }
-                var commandPath = verb + "\\command";
-                // %V supplies the directory for background clicks; %1 supplies selected files/folders.
-                var target = scope == "Directory\\Background" ? "%V" : "%1";
-                // A trailing backslash before a shell-inserted closing quote escapes that quote on Windows.
-                // The sentinel uses a character forbidden in Windows file names, so it cannot collide.
-                var shellPathOption = "--shell-path \"" + target + "|\"";
-                var invocation = QuoteArgument(exe) + " " + shellPathOption + " --action " + entry.Action;
-                values.Add(new(commandPath, null, invocation));
-            }
+            // %V supplies the background directory; %1 supplies the selected file/folder.
+            var target = scope == "Directory\\Background" ? "%V" : "%1";
+            // The forbidden path character protects a trailing backslash before the closing quote.
+            var shellPathOption = "--shell-path \"" + target + "|\"";
+            values.Add(new(verb + "\\command", null, QuoteArgument(exe) + " " + shellPathOption + " --action " + action));
         }
     }
 
@@ -116,23 +119,16 @@ public static class ExplorerIntegration
         return result.ToString();
     }
 
-    public static void Install(string executablePath)
+    public static void Install(string executablePath, ExplorerMenuSettings? settings = null)
     {
-        var plan = BuildRegistrationPlan(executablePath);
+        var plan = BuildRegistrationPlan(executablePath, settings);
         // Never overwrite a menu key created by a different app or user.
-        foreach (var scope in Scopes)
+        foreach (var path in plan.Where(value => value.ValueName == "MoaVcsOwner").Select(value => value.KeyPath))
         {
-            using var existing = Registry.CurrentUser.OpenSubKey(MenuPath(scope), writable: false);
+            using var existing = Registry.CurrentUser.OpenSubKey(path, writable: false);
             var owner = existing?.GetValue("MoaVcsOwner") as string;
             if (existing is not null && !string.Equals(owner, Owner, StringComparison.Ordinal))
-                throw new InvalidOperationException($"탐색기 메뉴 위치가 이미 다른 앱에서 사용 중입니다: {scope}");
-        }
-        foreach (var scope in Scopes)
-        {
-            using var existing = Registry.CurrentUser.OpenSubKey(CommandRoot(scope), writable: false);
-            var owner = existing?.GetValue("MoaVcsOwner") as string;
-            if (existing is not null && !string.Equals(owner, Owner, StringComparison.Ordinal))
-                throw new InvalidOperationException("moavcs 탐색기 명령 이름이 이미 사용 중입니다.");
+                throw new InvalidOperationException($"탐색기 메뉴 위치가 이미 다른 앱에서 사용 중입니다: {path}");
         }
 
         try
@@ -160,6 +156,17 @@ public static class ExplorerIntegration
 
     private static void UninstallOwnedKeys(string? expectedExecutable = null)
     {
+        // Shortcuts carry their own target: an older install must not remove a newer install's verbs.
+        foreach (var scope in Scopes)
+        foreach (var action in scope == "*" ? new[] { "commit" } : new[] { "commit", "update" })
+        {
+            var path = QuickMenuPath(scope, action);
+            using var key = Registry.CurrentUser.OpenSubKey(path, writable: false);
+            if (string.Equals(key?.GetValue("MoaVcsOwner") as string, Owner, StringComparison.Ordinal) &&
+                (expectedExecutable is null || string.Equals(key?.GetValue("MoaVcsExecutable") as string,
+                    Path.GetFullPath(expectedExecutable), StringComparison.OrdinalIgnoreCase)))
+                Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false);
+        }
         var scopes = Scopes.Where(scope => expectedExecutable is null || CommandTargetsExecutable(scope, expectedExecutable)).ToArray();
         foreach (var scope in scopes)
         {
@@ -188,6 +195,8 @@ public static class ExplorerIntegration
     }
 
     private static string MenuPath(string scope) => $"Software\\Classes\\{scope}\\shell\\{MenuName}";
+    private static string QuickMenuPath(string scope, string action) =>
+        $"Software\\Classes\\{scope}\\shell\\{MenuName}." + (action == "commit" ? "Commit" : "Update");
     private static string CommandKeyName(string scope) => scope switch
     {
         "Directory\\Background" => "Directory\\ContextMenus\\MoaVcs.BackgroundCommands",

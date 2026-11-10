@@ -105,6 +105,26 @@ internal static class Program
             ((ScrollViewer)settingsWindow.Content).ScrollToVerticalOffset(520);
             Pump();
             Render(settingsWindow, Path.Combine(output, "settings-file-tools.png"));
+            var menuOptions = Descendants((DependencyObject)settingsWindow.Content).OfType<CheckBox>()
+                .Where(c => c.Name is "ExplorerCommitTopLevel" or "ExplorerUpdateTopLevel").ToList();
+            if (menuOptions.Count != 2 || menuOptions.Any(c => c.IsChecked != true))
+                throw new InvalidOperationException("Explorer shortcuts must default to the first menu level.");
+            ((ScrollViewer)settingsWindow.Content).ScrollToEnd();
+            Pump();
+            Render(settingsWindow, Path.Combine(output, "settings-explorer.png"));
+            var submenuSettingsWindow = new SettingsWindow(new AppSettings
+            {
+                ExplorerMenu = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = false }
+            }, settings, new MoaVcs.Core.ProcessCommandRunner(), opened.Add);
+            var submenuContent = (FrameworkElement)submenuSettingsWindow.Content;
+            var submenuSize = new Size(submenuSettingsWindow.Width, submenuSettingsWindow.Height - 32);
+            submenuContent.Measure(submenuSize);
+            submenuContent.Arrange(new Rect(submenuSize));
+            submenuContent.UpdateLayout();
+            var savedMenuOptions = Descendants((DependencyObject)submenuSettingsWindow.Content).OfType<CheckBox>()
+                .Where(c => c.Name is "ExplorerCommitTopLevel" or "ExplorerUpdateTopLevel").ToList();
+            if (savedMenuOptions.Count != 2 || savedMenuOptions.Any(c => c.IsChecked != false))
+                throw new InvalidOperationException("Explorer settings must display the saved submenu choices.");
             var createWindow = new CreateRepositoryWindow(kind => kind switch
             {
                 MoaVcs.Core.VcsKind.Git => new MoaVcs.Core.Providers.GitProvider(new MoaVcs.Core.ProcessCommandRunner()),

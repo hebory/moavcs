@@ -15,7 +15,7 @@ public partial class App : Application
             {
                 ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 var executable = global::MoaVcs.App.MainWindow.GetExecutablePath();
-                if (options.InstallContextMenu) ExplorerIntegration.Install(executable);
+                if (options.InstallContextMenu) ExplorerIntegration.Install(executable, new SettingsStore().Load().ExplorerMenu);
                 else ExplorerIntegration.Uninstall(executable);
                 Shutdown(0);
                 return;

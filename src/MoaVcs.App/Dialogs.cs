@@ -168,6 +168,8 @@ public sealed class SettingsWindow : Window
     private readonly CancellationTokenSource _cancellation = new();
     private readonly Button _check;
     private readonly Action<Uri> _openDownload;
+    private readonly CheckBox _commitTopLevel;
+    private readonly CheckBox _updateTopLevel;
     public SettingsWindow(AppSettings settings, SettingsStore store, ICommandRunner runner, Action<Uri>? openDownload = null)
     {
         _settings = settings; _store = store; _runner = runner;
@@ -261,12 +263,42 @@ public sealed class SettingsWindow : Window
         panel.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromRgb(227, 231, 237)), Margin = new Thickness(0, 20, 0, 14) });
         panel.Children.Add(new TextBlock { Text = "탐색기 우클릭 메뉴", FontSize = 16, FontWeight = FontWeights.SemiBold });
         panel.Children.Add(new TextBlock { Text = "파일 · 폴더 · 폴더 배경에 MoaVCS 메뉴를 추가합니다.\nWindows 11에서는 ‘더 많은 옵션 표시’에 나타납니다.", Foreground = Brushes.SlateGray, Margin = new Thickness(0, 7, 0, 8), LineHeight = 21 });
+        var explorerMenu = settings.ExplorerMenu ?? new ExplorerMenuSettings();
+        _commitTopLevel = new CheckBox
+        {
+            Name = "ExplorerCommitTopLevel",
+            Content = "커밋을 첫 번째 메뉴에 표시",
+            IsChecked = explorerMenu.ShowCommitAtTopLevel,
+            Margin = new Thickness(0, 5, 0, 4)
+        };
+        _updateTopLevel = new CheckBox
+        {
+            Name = "ExplorerUpdateTopLevel",
+            Content = "업데이트 / Pull을 첫 번째 메뉴에 표시 (폴더)",
+            IsChecked = explorerMenu.ShowUpdateAtTopLevel,
+            Margin = new Thickness(0, 4, 0, 9)
+        };
+        panel.Children.Add(_commitTopLevel);
+        panel.Children.Add(_updateTopLevel);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "체크를 해제한 작업은 MoaVCS 하위 메뉴에 표시됩니다.",
+            FontSize = 11, Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8)
+        });
         var shellButtons = new StackPanel { Orientation = Orientation.Horizontal };
         shellButtons.Children.Add(DialogLayout.Button("메뉴 등록 / 갱신", (_, _) => SetExplorerMenu(true)));
         var remove = DialogLayout.Button("메뉴 제거", (_, _) => SetExplorerMenu(false)); remove.Margin = new Thickness(10, 8, 0, 0); shellButtons.Children.Add(remove); panel.Children.Add(shellButtons);
         panel.Children.Add(_notice);
         panel.Children.Add(DialogLayout.Button("설정 저장", Save_Click, true));
-        try { _notice.Text = ExplorerIntegration.IsInstalled() ? "탐색기 메뉴가 등록되어 있습니다." : "탐색기 메뉴가 아직 등록되지 않았습니다."; }
+        try
+        {
+            _notice.Text = ExplorerIntegration.IsInstalled(MainWindow.GetExecutablePath())
+                ? "현재 설치본의 탐색기 메뉴가 등록되어 있습니다."
+                : ExplorerIntegration.IsInstalled()
+                    ? "다른 설치본의 메뉴가 등록되어 있습니다. 현재 설치본으로 바꾸려면 메뉴 등록 / 갱신을 누르세요."
+                    : "탐색기 메뉴가 아직 등록되지 않았습니다.";
+        }
         catch (Exception ex) { _notice.Text = ex.Message; }
         Closed += (_, _) => _cancellation.Cancel();
     }
@@ -299,11 +331,36 @@ public sealed class SettingsWindow : Window
     {
         try
         {
-            if (install) ExplorerIntegration.Install(MainWindow.GetExecutablePath()); else ExplorerIntegration.Uninstall();
-            _notice.Text = install ? "MoaVCS 탐색기 메뉴를 등록했습니다. 폴더를 우클릭해 확인하세요." : "MoaVCS 탐색기 메뉴를 제거했습니다.";
+            if (install)
+            {
+                var executable = MainWindow.GetExecutablePath();
+                var menuSettings = ReadExplorerMenuSettings();
+                _store.SaveExplorerMenu(menuSettings);
+                ExplorerIntegration.Install(executable, menuSettings);
+                _settings.ExplorerMenu = menuSettings;
+                _notice.Text = "MoaVCS 탐색기 메뉴를 등록했습니다. 선택한 첫 단계 작업도 저장했습니다.";
+            }
+            else
+            {
+                ExplorerIntegration.Uninstall(MainWindow.GetExecutablePath());
+                _notice.Text = ExplorerIntegration.IsInstalled()
+                    ? "다른 설치본의 탐색기 메뉴는 유지했습니다. 해당 설치본에서 제거하세요."
+                    : "MoaVCS 탐색기 메뉴를 제거했습니다.";
+            }
         }
-        catch (Exception ex) { _notice.Text = ex.Message; }
+        catch (Exception ex)
+        {
+            _notice.Text = install
+                ? "탐색기 메뉴 설정 저장 또는 등록에 실패했습니다: " + ex.Message
+                : ex.Message;
+        }
     }
+
+    private ExplorerMenuSettings ReadExplorerMenuSettings() => new()
+    {
+        ShowCommitAtTopLevel = _commitTopLevel.IsChecked == true,
+        ShowUpdateAtTopLevel = _updateTopLevel.IsChecked == true
+    };
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
@@ -326,11 +383,30 @@ public sealed class SettingsWindow : Window
             {
                 RecentRepositories = _settings.RecentRepositories,
                 ExecutablePaths = _paths.ToDictionary(pair => pair.Key, pair => pair.Value.Text.Trim()),
-                ExternalTools = externalTools
+                ExternalTools = externalTools,
+                ExplorerMenu = ReadExplorerMenuSettings()
             };
+            var previousMenuSettings = _settings.ExplorerMenu ?? new ExplorerMenuSettings();
+            var menuSettingsChanged = previousMenuSettings.ShowCommitAtTopLevel != updated.ExplorerMenu.ShowCommitAtTopLevel ||
+                previousMenuSettings.ShowUpdateAtTopLevel != updated.ExplorerMenu.ShowUpdateAtTopLevel;
             _store.Save(updated);
             _settings.ExecutablePaths = updated.ExecutablePaths;
             _settings.ExternalTools = updated.ExternalTools;
+            if (menuSettingsChanged)
+            {
+                try
+                {
+                    var executable = MainWindow.GetExecutablePath();
+                    if (ExplorerIntegration.IsInstalled(executable))
+                        ExplorerIntegration.Install(executable, updated.ExplorerMenu);
+                }
+                catch (Exception ex)
+                {
+                    _notice.Text = "설정은 저장했지만 탐색기 메뉴 확인 또는 갱신에 실패했습니다: " + ex.Message;
+                    return;
+                }
+            }
+            _settings.ExplorerMenu = updated.ExplorerMenu;
             DialogResult = true;
         }
         catch (Exception ex) { _notice.Text = ex.Message; }
