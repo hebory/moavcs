@@ -7,21 +7,21 @@
   <Grid.ColumnDefinitions><ColumnDefinition Width="228"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
   <Border Background="#172434">
    <Grid Margin="20,26,20,16">
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel>
      <StackPanel Orientation="Horizontal" Margin="7,0,0,32"><Border Background="#E45F3C" Width="33" Height="33" CornerRadius="10" Margin="0,0,11,0"><TextBlock Text="m" Foreground="White" FontSize="25" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,-5,0,0"/></Border><TextBlock Text="moa" Foreground="White" FontSize="27" FontWeight="Bold"/><TextBlock Text="VCS" Foreground="#91A0B5" FontSize="16" Margin="3,7,0,0"/></StackPanel>
-     <TextBlock Text="WORKSPACE" Foreground="#71839A" FontSize="10" FontWeight="Bold" Margin="13,0,0,9"/>
+     <TextBlock Text="내 작업" Foreground="#91A0B5" FontSize="11" FontWeight="Bold" Margin="13,0,0,9"/>
      <Button x:Name="WorkspaceNav" Style="{StaticResource NavButton}" Background="#28394E" Foreground="White" Click="WorkspaceNav_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8B7;" Margin="0,0,12,0"/><TextBlock Text="작업 공간"/></StackPanel></Button>
      <Button Style="{StaticResource NavButton}" Click="OpenFolder_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE838;" Margin="0,0,12,0"/><TextBlock Text="저장소 열기"/></StackPanel></Button>
     </StackPanel>
-    <StackPanel Grid.Row="1" Margin="0,31,0,0">
-     <TextBlock Text="RECENT REPOSITORIES" Foreground="#71839A" FontSize="10" FontWeight="Bold" Margin="13,0,0,11"/>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,24,0,10"><StackPanel>
+     <TextBlock Text="최근 저장소" Foreground="#91A0B5" FontSize="11" FontWeight="Bold" Margin="13,0,0,11"/>
      <ItemsControl x:Name="RecentList"><ItemsControl.ItemTemplate><DataTemplate><Button Style="{StaticResource NavButton}" Click="Recent_Click" Tag="{Binding}" ToolTip="{Binding Path}"><StackPanel Width="156"><TextBlock Text="{Binding Name}" Foreground="#D6DFEA" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding KindLabel}" Foreground="#71839A" FontSize="10" Margin="0,3,0,0"/></StackPanel></Button></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-     <TextBlock x:Name="RecentEmpty" Text="아직 열린 저장소가 없습니다" Foreground="#71839A" FontSize="11" Margin="13,4"/>
-    </StackPanel>
+     <TextBlock x:Name="RecentEmpty" Text="아직 열린 저장소가 없습니다" Foreground="#91A0B5" FontSize="11" Margin="13,4"/>
+    </StackPanel></ScrollViewer>
     <StackPanel Grid.Row="3">
      <Border Background="#213247" CornerRadius="8" Padding="14" Margin="0,0,0,18"><StackPanel><TextBlock Text="한곳에 모으다." Foreground="#E4EAF1" FontWeight="SemiBold"/><TextBlock Text="Git · SVN · Perforce · Lore" Foreground="#8296B0" FontSize="11" Margin="0,7,0,0"/></StackPanel></Border>
-     <Button Style="{StaticResource NavButton}" Click="Settings_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" Margin="0,0,12,0"/><TextBlock Text="도구 및 탐색기 설정"/></StackPanel></Button>
+     <Button Style="{StaticResource NavButton}" Click="Settings_Click" ToolTip="버전 관리 도구, 비교·이력 도구, 탐색기 메뉴"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" Margin="0,0,12,0"/><TextBlock Text="설정"/></StackPanel></Button>
      <TextBlock x:Name="VersionText" Text="MoaVCS" Foreground="#5F738D" FontSize="10" Margin="13,14,0,0"/>
     </StackPanel>
    </Grid>
@@ -30,8 +30,34 @@
    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="34"/></Grid.RowDefinitions>
    <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="30,22">
     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-     <StackPanel><TextBlock Text="YOUR WORK, CONNECTED" Foreground="{StaticResource Accent}" FontWeight="Bold" FontSize="10" Margin="0,0,0,6"/><StackPanel Orientation="Horizontal"><TextBlock x:Name="RepoTitle" Text="작업 공간" FontSize="25" FontWeight="SemiBold"/><Border x:Name="BranchBadge" Background="#EEF3F8" CornerRadius="4" Padding="9,4" Margin="12,4,0,2" Visibility="Collapsed"><TextBlock x:Name="BranchText" FontSize="11" Foreground="#52657D"/></Border></StackPanel><TextBlock x:Name="RepoPath" Text="사용할 저장소를 선택해 주세요." Foreground="{StaticResource Muted}" Margin="0,6,0,0" FontSize="12" TextTrimming="CharacterEllipsis"/></StackPanel>
-     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><Button x:Name="CreateButton" Content="＋  새 저장소 / 복제" Click="Create_Click" Margin="0,0,9,0"/><Button Content="폴더 열기" Style="{StaticResource AccentButton}" Click="OpenFolder_Click"/></StackPanel>
+     <StackPanel><TextBlock Text="YOUR WORK, CONNECTED" Foreground="{StaticResource Accent}" FontWeight="Bold" FontSize="10" Margin="0,0,0,6"/><StackPanel Orientation="Horizontal"><TextBlock x:Name="RepoTitle" Text="작업 공간" FontSize="25" FontWeight="SemiBold" MaxWidth="340" TextTrimming="CharacterEllipsis"/><Border x:Name="BranchBadge" Background="#EEF3F8" CornerRadius="4" Padding="9,4" Margin="12,4,0,2" Visibility="Collapsed"><TextBlock x:Name="BranchText" FontSize="11" Foreground="#52657D" MaxWidth="130" TextTrimming="CharacterEllipsis"/></Border></StackPanel><TextBlock x:Name="RepoPath" Text="사용할 저장소를 선택해 주세요." Foreground="{StaticResource Muted}" Margin="0,6,0,0" FontSize="12" TextTrimming="CharacterEllipsis"/></StackPanel>
+     <Menu x:Name="WorkspaceMenu" Grid.Column="1" Background="Transparent" VerticalAlignment="Center" FontSize="13">
+      <MenuItem Header="저장소 ▾" Padding="14,10">
+       <MenuItem Header="저장소 폴더 열기…" InputGestureText="Ctrl+O" Click="OpenFolder_Click"/>
+       <MenuItem x:Name="CreateButton" Header="새 저장소 만들기 / 복제…" Click="Create_Click"/>
+       <Separator/>
+       <MenuItem x:Name="RemoteButton" Header="원격 주소 설정…" Click="Remote_Click" Visibility="Collapsed"/>
+       <MenuItem x:Name="ProviderMenu" Header="버전 관리 도구 변경" IsEnabled="False">
+        <MenuItem Header="Git" Tag="Git" IsCheckable="True" Click="ProviderMenu_Click"/>
+        <MenuItem Header="SVN" Tag="Svn" IsCheckable="True" Click="ProviderMenu_Click"/>
+        <MenuItem Header="Perforce" Tag="Perforce" IsCheckable="True" Click="ProviderMenu_Click"/>
+        <MenuItem Header="Lore" Tag="Lore" IsCheckable="True" Click="ProviderMenu_Click"/>
+       </MenuItem>
+      </MenuItem>
+      <MenuItem x:Name="FileToolsMenu" Header="파일 도구 ▾" Padding="14,10" IsEnabled="False">
+       <MenuItem x:Name="FileDiffButton" Header="선택 파일 비교 (Diff)" Click="FileDiff_Click"/>
+       <MenuItem x:Name="FileBlameButton" Header="선택 파일의 행별 이력 (Blame)" Click="FileBlame_Click"/>
+       <MenuItem Header="내장 도구로 열기">
+        <MenuItem x:Name="InternalDiffMenu" Header="선택 파일 비교" Click="InternalDiff_Click"/>
+        <MenuItem x:Name="InternalBlameMenu" Header="선택 파일의 행별 이력" Click="InternalBlame_Click"/>
+       </MenuItem>
+       <Separator/>
+       <MenuItem x:Name="BrowseDiffButton" Header="다른 파일을 골라 비교…" Click="BrowseDiff_Click"/>
+       <MenuItem x:Name="BrowseBlameButton" Header="다른 파일의 행별 이력…" Click="BrowseBlame_Click"/>
+       <Separator/>
+       <MenuItem Header="비교·이력 도구 설정…" Click="FileToolSettings_Click"/>
+      </MenuItem>
+     </Menu>
     </Grid>
    </Border>
    <Grid Grid.Row="1" Margin="28,22,28,22">
@@ -43,51 +69,49 @@
       <StackPanel Grid.Row="1" HorizontalAlignment="Center" MaxWidth="740" Margin="0,0,0,26">
        <Border Background="#FBE8DF" Width="58" Height="58" CornerRadius="17" HorizontalAlignment="Left" Margin="0,0,0,24"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8F1;" Foreground="{StaticResource Accent}" FontSize="27" HorizontalAlignment="Center"/></Border>
        <TextBlock Text="모든 버전 관리,&#x0a;하나의 작업 공간." FontSize="37" FontWeight="SemiBold" LineHeight="51"/>
-       <TextBlock Text="익숙한 파일에서 시작하세요. 변경 내용을 확인하고,&#x0a;차이를 비교하고, 작업을 기록하는 곳입니다." FontSize="15" LineHeight="25" Foreground="{StaticResource Muted}" Margin="0,18,0,26"/>
+       <TextBlock Text="저장소는 파일과 변경 이력을 함께 관리하는 폴더입니다.&#x0a;사용 중인 폴더를 열거나 새 저장소로 시작하세요." FontSize="15" LineHeight="25" Foreground="{StaticResource Muted}" Margin="0,18,0,26"/>
        <StackPanel Orientation="Horizontal"><Button Content="저장소 폴더 열기  →" Style="{StaticResource AccentButton}" Padding="20,12" Click="OpenFolder_Click"/><Button Content="새로 시작하기" Margin="12,0,0,0" Click="Create_Click"/></StackPanel>
-       <UniformGrid Columns="4" Margin="0,42,0,0">
-        <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="17,15" Margin="0,0,10,0"><StackPanel><TextBlock Text="Git" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="분산 저장소" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,7,0,0"/></StackPanel></Border>
-        <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="17,15" Margin="0,0,10,0"><StackPanel><TextBlock Text="SVN" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="중앙 저장소" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,7,0,0"/></StackPanel></Border>
-        <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="17,15" Margin="0,0,10,0"><StackPanel><TextBlock Text="Perforce" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="워크스페이스" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,7,0,0"/></StackPanel></Border>
-        <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="17,15"><StackPanel><TextBlock Text="Lore" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="Epic Games" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,7,0,0"/></StackPanel></Border>
+       <UniformGrid Columns="3" Margin="0,36,0,0">
+        <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="17,15" Margin="0,0,10,0"><StackPanel><TextBlock Text="1  변경 확인" FontSize="15" FontWeight="SemiBold"/><TextBlock Text="바뀐 파일과 내용을&#x0a;살펴보세요." Foreground="{StaticResource Muted}" FontSize="12" Margin="0,9,0,0" LineHeight="21"/></StackPanel></Border>
+        <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="17,15" Margin="0,0,10,0"><StackPanel><TextBlock Text="2  기록 준비" FontSize="15" FontWeight="SemiBold"/><TextBlock Text="함께 기록할 파일을&#x0a;선택하세요." Foreground="{StaticResource Muted}" FontSize="12" Margin="0,9,0,0" LineHeight="21"/></StackPanel></Border>
+        <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="17,15"><StackPanel><TextBlock Text="3  변경 기록" FontSize="15" FontWeight="SemiBold"/><TextBlock Text="설명을 적고 커밋해&#x0a;작업 이력을 남기세요." Foreground="{StaticResource Muted}" FontSize="12" Margin="0,9,0,0" LineHeight="21"/></StackPanel></Border>
        </UniformGrid>
        <TextBlock Text="탐색기 우클릭으로도 바로 열 수 있습니다. 설정에서 메뉴를 등록하세요." Foreground="{StaticResource Muted}" FontSize="11" Margin="0,20,0,0"/>
       </StackPanel>
      </Grid>
      <Grid x:Name="RepositoryPanel" Visibility="Collapsed">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-      <Grid Margin="0,0,0,16"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-       <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><ComboBox x:Name="ProviderPicker" Grid.Column="0" Width="125" SelectionChanged="ProviderPicker_SelectionChanged" ToolTip="사용할 버전 관리 시스템"/><TextBlock x:Name="RepositorySummary" Grid.Column="1" Foreground="{StaticResource Muted}" FontSize="11" Margin="14,0,0,0" MaxWidth="250" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/></Grid>
-       <StackPanel Grid.Column="1" Orientation="Horizontal"><Button x:Name="RemoteButton" Content="원격 주소…" Click="Remote_Click" Visibility="Collapsed" Margin="0,0,8,0" ToolTip="Git origin 원격 주소 보기 및 변경"/><Button x:Name="UpdateButton" Content="↓  가져오기" Click="Update_Click" Margin="0,0,8,0"/><Button x:Name="PushButton" Content="↑  보내기" Click="Push_Click" Margin="0,0,8,0"/><Button x:Name="RefreshButton" Content="↻  새로 고침" Click="Refresh_Click" ToolTip="F5"/></StackPanel>
-       <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,12,0,0">
-        <Button x:Name="FileDiffButton" Content="Diff 열기" Click="FileDiff_Click" Margin="0,0,8,0" ToolTip="선택 파일을 설정한 비교 도구로 열기. 우클릭으로 내장 도구 선택."><Button.ContextMenu><ContextMenu><MenuItem Header="내장 diff로 열기" Click="InternalDiff_Click"/></ContextMenu></Button.ContextMenu></Button>
-        <Button x:Name="FileBlameButton" Content="Blame 열기" Click="FileBlame_Click" Margin="0,0,16,0" ToolTip="선택 파일의 행별 이력. 우클릭으로 내장 도구 선택."><Button.ContextMenu><ContextMenu><MenuItem Header="내장 blame으로 열기" Click="InternalBlame_Click"/></ContextMenu></Button.ContextMenu></Button>
-        <Button x:Name="BrowseDiffButton" Content="파일 diff…" Click="BrowseDiff_Click" Margin="0,0,8,0" ToolTip="변경이 없는 저장소 파일도 선택할 수 있습니다."/>
-        <Button x:Name="BrowseBlameButton" Content="파일 blame…" Click="BrowseBlame_Click" Margin="0,0,12,0"/>
-        <TextBlock x:Name="FileToolsHint" Text="내장 도구 · 설정에서 외부 도구 선택" FontSize="11" Foreground="{StaticResource Muted}"/>
+      <Grid Margin="0,0,0,14"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <StackPanel Margin="0,0,16,0"><TextBlock x:Name="RepositoryKind" Text="저장소" FontWeight="SemiBold"/><TextBlock x:Name="RepositorySummary" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel>
+       <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+        <Button x:Name="UpdateButton" Content="↓  가져오기" Click="Update_Click" Margin="0,0,8,0" ToolTip="원격 저장소의 변경을 이 작업 공간에 적용합니다."/>
+        <Button x:Name="PushButton" Content="↑  보내기" Click="Push_Click" Margin="0,0,8,0" ToolTip="기록한 커밋을 원격 저장소에 전송합니다."/>
+        <Button x:Name="RefreshButton" Content="↻" Padding="12,9" Click="Refresh_Click" ToolTip="변경 파일 새로 고침 (F5)" AutomationProperties.Name="새로 고침"/>
        </StackPanel>
       </Grid>
       <Border Grid.Row="1" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8">
        <TabControl x:Name="MainTabs" BorderThickness="0" Background="Transparent" Padding="0" Margin="1" SelectionChanged="MainTabs_SelectionChanged">
         <TabItem x:Name="ChangesTab" Header="변경 파일">
-         <Grid><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-          <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="5*" MinWidth="300"/><ColumnDefinition Width="5"/><ColumnDefinition Width="6*" MinWidth="300"/></Grid.ColumnDefinitions>
-           <Grid><Grid.RowDefinitions><RowDefinition Height="49"/><RowDefinition Height="*"/><RowDefinition Height="30"/></Grid.RowDefinitions>
-            <DockPanel Margin="14,8"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="StageButton" Content="스테이지" Padding="9,6" FontSize="11" Click="Stage_Click"/><Button x:Name="UnstageButton" Content="해제" Padding="9,6" FontSize="11" Click="Unstage_Click" Margin="6,0,0,0"/></StackPanel><TextBlock x:Name="ChangeCount" Text="0개 변경" FontWeight="SemiBold" FontSize="12"/></DockPanel>
-            <Grid Grid.Row="1"><DataGrid x:Name="ChangesGrid" SelectionChanged="ChangesGrid_SelectionChanged" SelectionMode="Extended"><DataGrid.Columns><DataGridTextColumn Header="상태" Binding="{Binding Status}" Width="95"/><DataGridTextColumn Header="파일 경로" Binding="{Binding Path}" Width="*"/><DataGridTextColumn Header="Index" Binding="{Binding IndexStatus}" Width="56"/></DataGrid.Columns></DataGrid><TextBlock x:Name="CleanMessage" Text="변경된 파일이 없습니다.&#x0a;작업 공간이 최신 상태입니다." TextAlignment="Center" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" LineHeight="25" IsHitTestVisible="False" Visibility="Collapsed"/></Grid>
-            <TextBlock Grid.Row="2" Text="Ctrl / Shift를 눌러 여러 파일 선택" FontSize="10" Foreground="{StaticResource Muted}" Margin="14,0"/>
+         <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <Border Background="#F5F8FB" Padding="16,10" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1"><StackPanel><TextBlock x:Name="WorkflowTitle" Text="변경 내용을 확인하세요" FontWeight="SemiBold"/><TextBlock x:Name="WorkflowHint" Text="파일을 선택하면 오른쪽에서 바뀐 내용을 볼 수 있습니다." Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"/></StackPanel></Border>
+          <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="5*" MinWidth="300"/><ColumnDefinition Width="5"/><ColumnDefinition Width="6*" MinWidth="300"/></Grid.ColumnDefinitions>
+           <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <DockPanel Margin="14,12,14,8"><TextBlock x:Name="ChangeCount" DockPanel.Dock="Right" Foreground="{StaticResource Muted}" FontSize="11"/><TextBlock Text="변경된 파일" FontWeight="SemiBold"/></DockPanel>
+            <WrapPanel Grid.Row="1" Margin="14,0,14,10"><Button x:Name="StageButton" Content="커밋에 포함" Padding="10,6" FontSize="12" Click="Stage_Click"/><Button x:Name="UnstageButton" Content="포함 해제" Padding="10,6" FontSize="12" Click="Unstage_Click" Margin="6,0,0,0"/></WrapPanel>
+            <Grid Grid.Row="2"><DataGrid x:Name="ChangesGrid" SelectionChanged="ChangesGrid_SelectionChanged" SelectionMode="Extended" AutomationProperties.Name="변경된 파일 목록"><DataGrid.Columns><DataGridTextColumn Header="상태" Binding="{Binding Status, Converter={StaticResource FileStatusLabel}}" Width="100"/><DataGridTextColumn Header="파일" Binding="{Binding Path}" Width="*"/><DataGridTemplateColumn x:Name="StagedColumn" Header="커밋 포함" Width="82"><DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock><TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}"><Setter Property="Text" Value="—"/><Setter Property="Foreground" Value="{StaticResource Muted}"/><Style.Triggers><DataTrigger Binding="{Binding IsStaged}" Value="True"><Setter Property="Text" Value="포함됨"/><Setter Property="Foreground" Value="#26754E"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn></DataGrid.Columns></DataGrid><TextBlock x:Name="CleanMessage" Text="변경된 파일이 없습니다.&#x0a;파일을 수정하면 여기에 표시됩니다." TextAlignment="Center" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" LineHeight="25" IsHitTestVisible="False" Visibility="Collapsed"/></Grid>
+            <TextBlock x:Name="SelectionHint" Grid.Row="3" Text="Ctrl / Shift로 여러 파일 선택" FontSize="11" Foreground="{StaticResource Muted}" Margin="14,8" TextWrapping="Wrap"/>
            </Grid>
            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="#F0F2F5"/>
            <Grid Grid.Column="2" Background="#FCFDFE"><Grid.RowDefinitions><RowDefinition Height="49"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-            <DockPanel Margin="14,8"><CheckBox x:Name="StagedDiffCheck" Content="스테이지 비교" DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}" Checked="StagedDiff_Changed" Unchecked="StagedDiff_Changed"/><TextBlock x:Name="DiffTitle" Text="변경 미리 보기" FontWeight="SemiBold" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,0,12,0"/></DockPanel>
+            <DockPanel Margin="14,8"><CheckBox x:Name="StagedDiffCheck" Content="커밋할 내용" DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}" Checked="StagedDiff_Changed" Unchecked="StagedDiff_Changed" ToolTip="포함된 변경과 이전 커밋을 비교합니다."/><TextBlock x:Name="DiffTitle" Text="내용 미리 보기" FontWeight="SemiBold" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,0,12,0" ToolTip="좌우 비교와 행별 이력은 위쪽 ‘파일 도구’에서 열 수 있습니다."/></DockPanel>
             <RichTextBox x:Name="DiffViewer" Grid.Row="1" IsReadOnly="True" IsDocumentEnabled="True" BorderThickness="0" Background="#FCFDFE" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="14,10" FontFamily="Cascadia Mono, Consolas" FontSize="12"><FlowDocument><Paragraph Foreground="#8290A2">파일을 선택하면 변경 내용을 볼 수 있습니다.</Paragraph></FlowDocument></RichTextBox>
            </Grid>
           </Grid>
-          <Border Grid.Row="1" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Background="#FCFCFD" Padding="18,14"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="CommitHint" Text="스테이지에 올린 변경 내용을 커밋합니다." FontSize="11" Foreground="{StaticResource Muted}" Margin="0,0,0,8"/><TextBox x:Name="CommitMessage" MinHeight="57" MaxHeight="100" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" ToolTip="변경 내용을 설명하는 커밋 메시지" TextChanged="CommitMessage_TextChanged"/></StackPanel><Button x:Name="CommitButton" Grid.Column="1" Content="커밋" Style="{StaticResource AccentButton}" Margin="14,24,0,0" VerticalAlignment="Center" Padding="25,13" Click="Commit_Click" ToolTip="Ctrl+Enter"/></Grid></Border>
+          <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Background="#FCFCFD" Padding="16,12"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="변경 기록 남기기" FontWeight="SemiBold"/><TextBlock x:Name="CommitHint" Text="커밋에 포함할 파일을 먼저 선택하세요." FontSize="11" Foreground="{StaticResource Muted}" Margin="0,4,0,8" TextWrapping="Wrap"/><Grid><TextBox x:Name="CommitMessage" MinHeight="53" MaxHeight="88" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" ToolTip="변경 내용을 설명하는 커밋 메시지" AutomationProperties.Name="변경 설명" TextChanged="CommitMessage_TextChanged"/><TextBlock Text="무엇을 바꿨나요? 예: 검색 결과 정렬 오류 수정" Foreground="{StaticResource Muted}" Margin="11,10" VerticalAlignment="Top" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=CommitMessage}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></Grid></StackPanel><StackPanel Grid.Column="1" Margin="14,20,0,0" VerticalAlignment="Center"><Button x:Name="CommitButton" Content="커밋" Style="{StaticResource AccentButton}" Padding="22,12" Click="Commit_Click" ToolTip="변경 설명과 함께 기록합니다 (Ctrl+Enter)."/><TextBlock x:Name="CommitDestinationHint" Text="이 PC에 기록" FontSize="10" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" Margin="0,6,0,0"/></StackPanel></Grid></Border>
          </Grid>
         </TabItem>
         <TabItem x:Name="HistoryTab" Header="커밋 이력"><Grid><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><DataGrid x:Name="HistoryGrid" SelectionMode="Single"><DataGrid.Columns><DataGridTextColumn Header="리비전" Binding="{Binding Id}" Width="110"/><DataGridTextColumn Header="메시지" Binding="{Binding Message}" Width="*"/><DataGridTextColumn Header="작성자" Binding="{Binding Author}" Width="140"/><DataGridTextColumn Header="날짜" Binding="{Binding Date}" Width="190"/></DataGrid.Columns></DataGrid><TextBlock Grid.Row="1" x:Name="HistoryHint" Text="최근 100개 기록" FontSize="11" Foreground="{StaticResource Muted}" Margin="15,12"/></Grid></TabItem>
-        <TabItem x:Name="OutputTab" Header="작업 기록"><TextBox x:Name="OutputLog" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Background="#F9FAFC" BorderThickness="0" FontFamily="Cascadia Mono, Consolas" FontSize="12" Margin="1"/></TabItem>
+        <TabItem x:Name="OutputTab" Header="실행 기록"><TextBox x:Name="OutputLog" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Background="#F9FAFC" BorderThickness="0" FontFamily="Cascadia Mono, Consolas" FontSize="12" Margin="1"/></TabItem>
        </TabControl>
       </Border>
      </Grid>

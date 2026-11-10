@@ -1,7 +1,9 @@
 <Application x:Class="MoaVcs.App.App"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
- xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="clr-namespace:MoaVcs.App">
  <Application.Resources>
+  <local:FileStatusConverter x:Key="FileStatusLabel"/>
   <SolidColorBrush x:Key="Ink" Color="#202C3D"/>
   <SolidColorBrush x:Key="Muted" Color="#748093"/>
   <SolidColorBrush x:Key="Accent" Color="#D85130"/>

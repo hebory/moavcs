@@ -24,7 +24,6 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _operation;
     private CancellationTokenSource? _diffOperation;
     private bool _busy;
-    private bool _changingProvider;
     private bool _historyLoaded;
     private string? _selectedPath;
     private readonly Action<Window>? _showInspection;
@@ -43,10 +42,8 @@ public partial class MainWindow : Window
         _settings = _settingsStore.Load();
         InitializeComponent();
         VersionText.Text = "MoaVCS  /  " + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "0.1.0");
-        _changingProvider = true;
-        ProviderPicker.ItemsSource = ProviderChoice.All;
-        _changingProvider = false;
         UpdateRecentList();
+        UpdateControls();
         Loaded += OnLoaded;
     }
 
@@ -145,9 +142,6 @@ public partial class MainWindow : Window
                 _selectedPath = selectedFile;
                 _historyLoaded = false;
                 HistoryGrid.ItemsSource = null;
-                _changingProvider = true;
-                ProviderPicker.SelectedItem = ProviderChoice.All.First(p => p.Kind == kind);
-                _changingProvider = false;
                 WelcomePanel.Visibility = Visibility.Collapsed;
                 RepositoryPanel.Visibility = Visibility.Visible;
                 SetRepositoryHeader();
@@ -171,7 +165,7 @@ public partial class MainWindow : Window
                     var target = _changes.FirstOrDefault(c => c.Path.Equals(relative, StringComparison.OrdinalIgnoreCase)) ?? new FileChange(relative, "Unchanged");
                     await InspectFileAsync(action == "blame", target: target);
                 }
-                else if (action == "blame") ShowNotice("Blame은 파일 단위로 확인할 수 있습니다. ‘파일 blame…’에서 파일을 선택하세요.");
+                else if (action == "blame") ShowNotice("행별 이력은 파일 단위로 확인합니다. ‘파일 도구 → 다른 파일의 행별 이력…’에서 파일을 선택하세요.");
                 else if (action == "remote") await EditRemoteUrlAsync();
                 else if (action is "update" or "push")
                     await ExecuteAsync(action == "update" ? VcsOperation.Update : VcsOperation.Push);
@@ -193,18 +187,28 @@ public partial class MainWindow : Window
         RepoPath.ToolTip = _repository.RootPath;
         BranchText.Text = _repository.Branch;
         BranchBadge.Visibility = string.IsNullOrWhiteSpace(_repository.Branch) ? Visibility.Collapsed : Visibility.Visible;
-        RepositorySummary.Text = _repository.Summary;
+        RepositoryKind.Text = _provider.Name + " 저장소";
+        RepositorySummary.Text = string.IsNullOrWhiteSpace(_repository.Summary)
+            ? (_provider.Capabilities.HasFlag(VcsCapabilities.Push)
+                ? "가져오기로 원격 변경을 받고, 보내기로 기록한 커밋을 공유하세요."
+                : "동기화로 서버의 변경을 이 작업 공간에 적용하세요.")
+            : _repository.Summary;
         RepositorySummary.ToolTip = _repository.Summary;
         Title = $"{RepoTitle.Text} · MoaVCS";
-        StageButton.Content = _provider.Kind switch { VcsKind.Svn => "추가 / 등록", VcsKind.Perforce => "변경 등록", _ => "스테이지" };
-        UpdateButton.Content = _provider.Kind == VcsKind.Git ? "↓  Pull" : "↓  동기화";
-        CommitHint.Text = _provider.Kind switch
+        StageButton.Content = _provider.Kind switch { VcsKind.Svn => "새 파일 등록", VcsKind.Perforce => "변경 등록", _ => "커밋에 포함" };
+        UnstageButton.Content = _provider.Kind == VcsKind.Perforce ? "등록 해제" : "포함 해제";
+        StageButton.ToolTip = _provider.Kind switch
         {
-            VcsKind.Git => "전체 스테이지의 변경을 커밋합니다. 파일 선택은 커밋 범위를 바꾸지 않습니다.",
-            VcsKind.Svn => "선택한 파일을 저장소에 커밋합니다. 새 파일은 먼저 추가 / 등록하세요.",
-            VcsKind.Lore => "스테이지의 변경 내용을 Lore 스냅샷으로 기록합니다.",
-            _ => "Perforce 변경 목록 제출은 현재 P4V 또는 p4 CLI에서 진행하세요."
+            VcsKind.Svn => "선택한 새 파일을 SVN 관리 대상으로 등록합니다.",
+            VcsKind.Perforce => "선택한 파일의 변경을 Perforce에 등록합니다 (reconcile).",
+            _ => "선택한 파일의 현재 변경을 다음 커밋에 포함합니다 (Stage)."
         };
+        UnstageButton.ToolTip = "등록 또는 커밋 포함을 해제합니다. 작업 파일의 내용은 유지됩니다.";
+        UpdateButton.Content = _provider.Kind == VcsKind.Git ? "↓  가져오기" : "↓  동기화";
+        CommitDestinationHint.Text = _provider.Kind switch { VcsKind.Svn => "SVN 서버에 기록", VcsKind.Perforce => "P4V에서 제출", _ => "이 PC에 기록" };
+        StagedColumn.Visibility = _provider.Kind is VcsKind.Git or VcsKind.Lore ? Visibility.Visible : Visibility.Collapsed;
+        foreach (MenuItem item in ProviderMenu.Items)
+            item.IsChecked = string.Equals(item.Tag as string, _provider.Kind.ToString(), StringComparison.Ordinal);
     }
 
     private void ApplyChanges(IReadOnlyList<FileChange> changes)
@@ -213,7 +217,7 @@ public partial class MainWindow : Window
         _changes = changes.ToList();
         ChangesGrid.ItemsSource = _changes;
         ChangeCount.Text = $"{_changes.Count}개 변경";
-        ChangesTab.Header = $"변경 파일  {_changes.Count}";
+        ChangesTab.Header = $"변경 내용  {_changes.Count}";
         CleanMessage.Visibility = changes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         var selected = _selectedPath is null ? previous : Path.GetRelativePath(_repository!.RootPath, _selectedPath).Replace('\\', '/');
         var match = _changes.FirstOrDefault(c => c.Path.Replace('\\', '/').Equals(selected, StringComparison.OrdinalIgnoreCase));
@@ -242,12 +246,13 @@ public partial class MainWindow : Window
         PushButton.IsEnabled = Can(VcsCapabilities.Push);
         CommitMessage.IsEnabled = Can(VcsCapabilities.Commit);
         CommitButton.IsEnabled = Can(VcsCapabilities.Commit) && !string.IsNullOrWhiteSpace(CommitMessage.Text) &&
-            (_provider?.Kind == VcsKind.Svn ? hasSelection : _changes.Count > 0);
+            (_provider?.Kind == VcsKind.Svn ? hasSelection : _changes.Any(c => c.IsStaged));
         HistoryTab.IsEnabled = caps.HasFlag(VcsCapabilities.History);
         StagedDiffCheck.Visibility = _provider?.Kind == VcsKind.Git ? Visibility.Visible : Visibility.Collapsed;
         RefreshButton.IsEnabled = !_busy;
-        ProviderPicker.IsEnabled = !_busy;
+        ProviderMenu.IsEnabled = !_busy && _repository is not null;
         CreateButton.IsEnabled = !_busy;
+        FileToolsMenu.IsEnabled = !_busy && _repository is not null;
         var singleFile = ChangesGrid.SelectedItems.Count == 1;
         FileDiffButton.IsEnabled = Can(VcsCapabilities.Diff) && singleFile;
         BrowseDiffButton.IsEnabled = Can(VcsCapabilities.Diff);
@@ -256,8 +261,51 @@ public partial class MainWindow : Window
             !ExternalToolLauncher.UsesPlaceholder(external, "blame"));
         FileBlameButton.IsEnabled = canBlame && singleFile;
         BrowseBlameButton.IsEnabled = canBlame;
-        FileToolsHint.Text = $"Diff: {ToolLabel(ExternalToolKind.Diff)} · Blame: {ToolLabel(ExternalToolKind.Blame)}";
+        InternalDiffMenu.IsEnabled = Can(VcsCapabilities.Diff) && singleFile;
+        InternalBlameMenu.IsEnabled = Can(VcsCapabilities.Blame) && singleFile;
+        FileToolsMenu.ToolTip = $"비교: {ToolLabel(ExternalToolKind.Diff)} 도구 · 행별 이력: {ToolLabel(ExternalToolKind.Blame)} 도구";
         CancelButton.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
+        UpdateWorkflowGuide();
+    }
+
+    private void UpdateWorkflowGuide()
+    {
+        var selected = ChangesGrid.SelectedItems.Count;
+        var staged = _changes.Count(c => c.IsStaged);
+        SelectionHint.Text = selected == 0 ? "파일을 선택하세요. Ctrl / Shift로 여러 파일을 고를 수 있습니다." : $"{selected}개 선택 · Ctrl / Shift로 여러 파일 선택";
+        CommitHint.Text = _provider?.Kind switch
+        {
+            VcsKind.Svn => $"선택한 {selected}개 파일을 SVN 서버에 기록합니다. 새 파일은 먼저 등록하세요.",
+            VcsKind.Perforce => "변경 등록 후 P4V 또는 p4 CLI에서 변경 목록을 제출하세요.",
+            _ => $"커밋에 포함된 {staged}개 파일의 변경을 함께 기록합니다. 목록의 선택과 커밋 범위는 다릅니다."
+        };
+        if (_changes.Count == 0)
+        {
+            WorkflowTitle.Text = "기록할 변경이 없습니다";
+            WorkflowHint.Text = "파일을 수정한 뒤 새로 고침하세요. 이전 기록은 ‘커밋 이력’에서, 개별 파일 비교는 ‘파일 도구’에서 확인할 수 있습니다.";
+        }
+        else if (_provider?.Kind == VcsKind.Perforce)
+        {
+            WorkflowTitle.Text = "변경 확인 → 변경 등록 → P4V에서 제출";
+            WorkflowHint.Text = "파일을 선택해 내용을 확인하고 ‘변경 등록’을 누르세요. 변경 목록 제출은 P4V 또는 p4 CLI에서 진행합니다.";
+        }
+        else if (_provider?.Kind == VcsKind.Svn)
+        {
+            WorkflowTitle.Text = "변경 확인 → 파일 선택 → 서버에 커밋";
+            WorkflowHint.Text = selected == 0 ? "함께 기록할 파일을 목록에서 선택하세요. 새 파일은 ‘새 파일 등록’을 먼저 누르세요." : "선택한 파일의 내용을 확인하고 아래에 변경 설명을 적으세요. 커밋하면 SVN 서버에 바로 기록됩니다.";
+        }
+        else if (staged == 0)
+        {
+            WorkflowTitle.Text = "변경 확인 → 커밋에 포함 → 기록 남기기";
+            WorkflowHint.Text = "파일의 변경 내용을 확인한 뒤 ‘커밋에 포함’을 누르세요. 포함할 파일을 준비하면 커밋할 수 있습니다.";
+        }
+        else
+        {
+            WorkflowTitle.Text = $"{staged}개 파일의 변경을 기록할 준비가 됐습니다";
+            WorkflowHint.Text = string.IsNullOrWhiteSpace(CommitMessage.Text)
+                ? "아래에 무엇을 바꿨는지 짧게 적고 ‘커밋’을 누르세요. 커밋 후 ‘보내기’로 원격 저장소에 공유할 수 있습니다."
+                : "‘커밋’을 누르면 포함된 변경이 이 PC에 기록됩니다. 원격 저장소에 공유하려면 이후 ‘보내기’를 누르세요.";
+        }
     }
 
     private string ToolLabel(ExternalToolKind kind) => _settings.ExternalTools.GetValueOrDefault(kind) is { UseExternal: true } ? "외부" : "내장";
@@ -403,7 +451,7 @@ public partial class MainWindow : Window
             await Task.Delay(100, cancellation.Token);
             var diff = await provider.GetDiffAsync(repository.RootPath, file, StagedDiffCheck.IsChecked == true, cancellation.Token);
             if (!cancellation.IsCancellationRequested)
-                RenderDiff(string.IsNullOrWhiteSpace(diff) ? (file.IsStaged && provider.Kind == VcsKind.Git ? "작업 트리 차이가 없습니다. ‘스테이지 비교’를 선택하세요." : "표시할 텍스트 차이가 없습니다.") : diff);
+                RenderDiff(string.IsNullOrWhiteSpace(diff) ? (file.IsStaged && provider.Kind == VcsKind.Git ? "커밋 포함 이후의 변경이 없습니다. ‘커밋할 내용’을 선택하세요." : "표시할 텍스트 차이가 없습니다.") : diff);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { if (!cancellation.IsCancellationRequested) RenderDiff(ex.Message); }
@@ -579,27 +627,23 @@ public partial class MainWindow : Window
         if (!ReferenceEquals(e.Source, MainTabs) || _busy || _historyLoaded || MainTabs.SelectedItem != HistoryTab) return;
         await RunBusyAsync("이력을 불러오는 중…", LoadHistoryAsync);
     }
-    private async void ProviderPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void ProviderMenu_Click(object sender, RoutedEventArgs e)
     {
-        if (_changingProvider || _busy || _repository is null || ProviderPicker.SelectedItem is not ProviderChoice choice) return;
-        var previous = _provider?.Kind;
-        await OpenRepositoryAsync(_repository.RootPath, choice.Kind);
-        if (_provider?.Kind != choice.Kind)
-        {
-            _changingProvider = true;
-            ProviderPicker.SelectedItem = ProviderChoice.All.FirstOrDefault(p => p.Kind == previous);
-            _changingProvider = false;
-        }
+        if (_busy || _repository is null || sender is not MenuItem { Tag: string tag } || !Enum.TryParse<VcsKind>(tag, out var kind)) return;
+        await OpenRepositoryAsync(_repository.RootPath, kind);
+        SetRepositoryHeader();
     }
     private async void Settings_Click(object sender, RoutedEventArgs e)
     {
         await OpenSettingsAsync();
     }
 
-    private async Task OpenSettingsAsync()
+    private async void FileToolSettings_Click(object sender, RoutedEventArgs e) => await OpenSettingsAsync(fileTools: true);
+
+    private async Task OpenSettingsAsync(bool fileTools = false)
     {
         if (_busy) return;
-        var dialog = new SettingsWindow(_settings, _settingsStore, _runner);
+        var dialog = new SettingsWindow(_settings, _settingsStore, _runner, fileTools: fileTools);
         if (_showDialog(dialog) == true && _repository is not null) await OpenRepositoryAsync(_repository.RootPath, _repository.Kind);
     }
 

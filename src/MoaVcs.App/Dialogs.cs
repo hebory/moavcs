@@ -170,16 +170,55 @@ public sealed class SettingsWindow : Window
     private readonly Action<Uri> _openDownload;
     private readonly CheckBox _commitTopLevel;
     private readonly CheckBox _updateTopLevel;
-    public SettingsWindow(AppSettings settings, SettingsStore store, ICommandRunner runner, Action<Uri>? openDownload = null)
+    public SettingsWindow(AppSettings settings, SettingsStore store, ICommandRunner runner, Action<Uri>? openDownload = null, bool fileTools = false)
     {
         _settings = settings; _store = store; _runner = runner;
         _openDownload = openDownload ?? VcsTools.OpenDownload;
-        Width = 700; Height = 820;
-        var panel = DialogLayout.Create(this, "도구 및 탐색기 설정", "각 도구의 다운로드 버튼으로 공식 배포 페이지를 여세요. 설치 후 ‘설치된 도구 확인’을 누르면 다시 찾습니다. 실행 경로를 비워 두면 PATH에서 검색합니다.");
+        Title = "MoaVCS · 도구 및 탐색기 설정";
+        SetResourceReference(FrameworkElement.StyleProperty, typeof(Window));
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ShowInTaskbar = false;
+        ResizeMode = ResizeMode.CanResize;
+        Width = 840; Height = 760; MinWidth = 760; MinHeight = 620;
+
+        var layout = new Grid { Margin = new Thickness(26, 22, 26, 18) };
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var header = new StackPanel { Margin = new Thickness(0, 0, 0, 14) };
+        header.Children.Add(new TextBlock { Text = "도구 및 탐색기 설정", FontSize = 24, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 6) });
+        header.Children.Add(new TextBlock
+        {
+            Text = "필요한 항목만 탭에서 설정하세요. 저장하면 이후 저장소 작업에 적용됩니다.",
+            Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap
+        });
+        layout.Children.Add(header);
+
+        var tabs = new TabControl { Name = "SettingsTabs", Margin = new Thickness(0, 0, 0, 12) };
+        Grid.SetRow(tabs, 1);
+        layout.Children.Add(tabs);
+
+        var toolsPanel = NewTabPanel();
+        toolsPanel.Children.Add(new TextBlock
+        {
+            Text = "각 버전 관리 도구의 실행 파일을 지정합니다. 경로를 비우면 PATH에서 검색합니다. 설치가 필요하면 공식 다운로드 페이지를 여세요.",
+            Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12), LineHeight = 21
+        });
         foreach (var choice in ProviderChoice.All)
         {
             var tool = VcsTools.Get(choice.Kind);
-            var label = new DockPanel { Margin = new Thickness(0, 10, 0, 6) };
+            var cardPanel = new StackPanel();
+            var card = new Border
+            {
+                Background = Brushes.White,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(227, 231, 237)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(14),
+                Margin = new Thickness(0, 0, 0, 10),
+                Child = cardPanel
+            };
+            var label = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
             var download = DialogLayout.Button("다운로드 ↗", (_, _) =>
             {
                 try { _openDownload(tool.DownloadUrl); _notice.Text = tool.DownloadHint + " 설치가 끝나면 ‘설치된 도구 확인’을 눌러 주세요."; }
@@ -190,11 +229,12 @@ public sealed class SettingsWindow : Window
             download.ToolTip = tool.DownloadHint + "\n" + tool.DownloadUrl.AbsoluteUri;
             download.Margin = new Thickness(10, 0, 0, 0);
             download.Padding = new Thickness(10, 5, 10, 5);
+            download.VerticalAlignment = VerticalAlignment.Center;
             DockPanel.SetDock(download, Dock.Right); label.Children.Add(download);
-            var version = new TextBlock { FontSize = 11, Foreground = Brushes.SlateGray, HorizontalAlignment = HorizontalAlignment.Right, MaxWidth = 300, TextTrimming = TextTrimming.CharacterEllipsis };
+            var version = new TextBlock { FontSize = 11, Foreground = Brushes.SlateGray, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 280, TextTrimming = TextTrimming.CharacterEllipsis };
             DockPanel.SetDock(version, Dock.Right); label.Children.Add(version);
-            label.Children.Add(new TextBlock { Text = choice.Label, FontWeight = FontWeights.SemiBold });
-            panel.Children.Add(label);
+            label.Children.Add(new TextBlock { Text = choice.Label, FontWeight = FontWeights.SemiBold, FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
+            cardPanel.Children.Add(label);
             var row = new DockPanel();
             var input = new TextBox { Text = settings.ExecutablePaths.GetValueOrDefault(choice.Kind, ""), Height = 36, ToolTip = "실행 파일 이름 또는 .exe 절대 경로 (명령 인수 제외)" };
             var browse = DialogLayout.Button("찾기", (_, _) =>
@@ -202,26 +242,41 @@ public sealed class SettingsWindow : Window
                 var picker = new OpenFileDialog { Title = choice.Label + " 실행 파일 선택", Filter = "프로그램 (*.exe)|*.exe" };
                 if (picker.ShowDialog(this) == true) input.Text = picker.FileName;
             });
-            browse.Margin = new Thickness(10, 0, 0, 0); DockPanel.SetDock(browse, Dock.Right); row.Children.Add(browse); row.Children.Add(input); panel.Children.Add(row);
+            browse.Margin = new Thickness(10, 0, 0, 0); DockPanel.SetDock(browse, Dock.Right); row.Children.Add(browse); row.Children.Add(input); cardPanel.Children.Add(row);
+            toolsPanel.Children.Add(card);
             _paths[choice.Kind] = input; _versions[choice.Kind] = version;
         }
         _check = DialogLayout.Button("설치된 도구 확인", Check_Click);
-        panel.Children.Add(_check);
-        panel.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromRgb(227, 231, 237)), Margin = new Thickness(0, 20, 0, 14) });
-        panel.Children.Add(new TextBlock { Text = "Diff · Blame 도구", FontSize = 16, FontWeight = FontWeights.SemiBold });
-        panel.Children.Add(new TextBlock
+        _check.Name = "CheckToolsButton";
+        _check.HorizontalAlignment = HorizontalAlignment.Left;
+        toolsPanel.Children.Add(_check);
+        tabs.Items.Add(CreateTab("버전 관리 도구", "Git · SVN · Perforce · Lore", toolsPanel));
+
+        var externalPanel = NewTabPanel();
+        externalPanel.Children.Add(new TextBlock
         {
-            Text = "기본값은 내장 화면입니다. 외부 도구를 사용하려면 실행 파일과 인수를 지정하세요. 인수는 한 줄에 하나씩 입력하며, 경로에 따옴표를 덧붙이지 않아도 됩니다.",
-            Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 7, 0, 8), LineHeight = 21
+            Text = "기본값은 MoaVCS 내장 비교와 이력 화면입니다. 외부 프로그램을 쓰려면 해당 도구를 켜고 실행 파일을 선택하세요. 인수 설정은 ‘고급 인수 설정’에서 필요할 때 펼칠 수 있습니다.",
+            Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12), LineHeight = 21
         });
         foreach (var kind in Enum.GetValues<ExternalToolKind>())
         {
             var config = settings.ExternalTools.GetValueOrDefault(kind) ?? new ExternalToolSettings();
             var title = kind == ExternalToolKind.Diff ? "차이 보기 · Diff" : "작성 이력 · Blame";
-            DialogLayout.Label(panel, title);
+            var cardPanel = new StackPanel();
+            var card = new Border
+            {
+                Background = Brushes.White,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(227, 231, 237)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(16),
+                Margin = new Thickness(0, 0, 0, 12),
+                Child = cardPanel
+            };
+            cardPanel.Children.Add(new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10) });
             var enabled = new CheckBox { Content = "외부 도구 사용", IsChecked = config.UseExternal, Margin = new Thickness(0, 0, 0, 8) };
-            panel.Children.Add(enabled);
-            panel.Children.Add(new TextBlock { Text = "실행 파일 (.exe)", FontSize = 11, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 0, 0, 5) });
+            cardPanel.Children.Add(enabled);
+            cardPanel.Children.Add(new TextBlock { Text = "실행 파일 (.exe)", FontSize = 11, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 0, 0, 5) });
             var exeRow = new DockPanel();
             var exe = new TextBox { Text = config.ExecutablePath, Height = 34, IsEnabled = config.UseExternal, ToolTip = "외부 프로그램 실행 파일의 절대 경로" };
             var browseExe = DialogLayout.Button("찾기", (_, _) =>
@@ -230,8 +285,7 @@ public sealed class SettingsWindow : Window
                 if (picker.ShowDialog(this) == true) exe.Text = picker.FileName;
             });
             browseExe.IsEnabled = config.UseExternal;
-            browseExe.Margin = new Thickness(10, 0, 0, 0); DockPanel.SetDock(browseExe, Dock.Right); exeRow.Children.Add(browseExe); exeRow.Children.Add(exe); panel.Children.Add(exeRow);
-            panel.Children.Add(new TextBlock { Text = "인수 (한 줄에 하나)", FontSize = 11, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 10, 0, 0) });
+            browseExe.Margin = new Thickness(10, 0, 0, 0); DockPanel.SetDock(browseExe, Dock.Right); exeRow.Children.Add(browseExe); exeRow.Children.Add(exe); cardPanel.Children.Add(exeRow);
             var args = new TextBox
             {
                 Text = config.ArgumentTemplates.Count > 0 ? string.Join(Environment.NewLine, config.ArgumentTemplates) :
@@ -248,21 +302,31 @@ public sealed class SettingsWindow : Window
             args.ToolTip = kind == ExternalToolKind.Diff
                 ? "한 줄에 인수 하나. {left}+{right} 또는 {patch}가 필요합니다. {file}, {repo}도 사용할 수 있습니다."
                 : "한 줄에 인수 하나. {blame} 또는 {file}이 필요합니다. {blame}은 TSV 임시 파일 경로입니다. {repo}도 사용할 수 있습니다.";
-            panel.Children.Add(args);
-            panel.Children.Add(new TextBlock
+            var advanced = new StackPanel();
+            advanced.Children.Add(new TextBlock { Text = "인수 (한 줄에 하나)", FontSize = 11, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 2, 0, 5) });
+            advanced.Children.Add(args);
+            advanced.Children.Add(new TextBlock
             {
                 Text = kind == ExternalToolKind.Diff
                     ? "사용 가능: {left}, {right}는 비교 스냅샷, {patch}는 패치 스냅샷, {file}은 원본 파일, {repo}는 저장소 경로입니다."
                     : "사용 가능: {blame}은 UTF-8 TSV 작성 이력 파일, {file}은 원본 파일, {repo}는 저장소 경로입니다.",
                 FontSize = 11, Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0)
             });
+            var expander = new Expander { Header = "고급 인수 설정", Content = advanced, IsExpanded = false, Margin = new Thickness(0, 9, 0, 0) };
+            cardPanel.Children.Add(expander);
+            externalPanel.Children.Add(card);
             enabled.Checked += (_, _) => { exe.IsEnabled = true; browseExe.IsEnabled = true; args.IsEnabled = true; };
             enabled.Unchecked += (_, _) => { exe.IsEnabled = false; browseExe.IsEnabled = false; args.IsEnabled = false; };
             _externalEnabled[kind] = enabled; _externalExecutables[kind] = exe; _externalArguments[kind] = args;
         }
-        panel.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromRgb(227, 231, 237)), Margin = new Thickness(0, 20, 0, 14) });
-        panel.Children.Add(new TextBlock { Text = "탐색기 우클릭 메뉴", FontSize = 16, FontWeight = FontWeights.SemiBold });
-        panel.Children.Add(new TextBlock { Text = "파일 · 폴더 · 폴더 배경에 MoaVCS 메뉴를 추가합니다.\nWindows 11에서는 ‘더 많은 옵션 표시’에 나타납니다.", Foreground = Brushes.SlateGray, Margin = new Thickness(0, 7, 0, 8), LineHeight = 21 });
+        tabs.Items.Add(CreateTab("비교·이력 도구", "Diff · Blame", externalPanel));
+
+        var explorerPanel = NewTabPanel();
+        explorerPanel.Children.Add(new TextBlock
+        {
+            Text = "파일과 폴더의 오른쪽 클릭 메뉴를 관리합니다. Windows 11에서는 ‘더 많은 옵션 표시’에서 찾을 수 있습니다.",
+            Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 14), LineHeight = 21
+        });
         var explorerMenu = settings.ExplorerMenu ?? new ExplorerMenuSettings();
         _commitTopLevel = new CheckBox
         {
@@ -278,19 +342,40 @@ public sealed class SettingsWindow : Window
             IsChecked = explorerMenu.ShowUpdateAtTopLevel,
             Margin = new Thickness(0, 4, 0, 9)
         };
-        panel.Children.Add(_commitTopLevel);
-        panel.Children.Add(_updateTopLevel);
-        panel.Children.Add(new TextBlock
+        explorerPanel.Children.Add(_commitTopLevel);
+        explorerPanel.Children.Add(_updateTopLevel);
+        explorerPanel.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromRgb(227, 231, 237)), Margin = new Thickness(0, 12, 0, 14) });
+        explorerPanel.Children.Add(new TextBlock
         {
-            Text = "체크를 해제한 작업은 MoaVCS 하위 메뉴에 표시됩니다.",
+            Text = "자주 쓰는 작업을 첫 번째 메뉴에 둘 수 있습니다. 체크를 해제하면 MoaVCS 하위 메뉴에 표시됩니다.",
             FontSize = 11, Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 8)
+            Margin = new Thickness(0, 0, 0, 14), LineHeight = 19
         });
         var shellButtons = new StackPanel { Orientation = Orientation.Horizontal };
         shellButtons.Children.Add(DialogLayout.Button("메뉴 등록 / 갱신", (_, _) => SetExplorerMenu(true)));
-        var remove = DialogLayout.Button("메뉴 제거", (_, _) => SetExplorerMenu(false)); remove.Margin = new Thickness(10, 8, 0, 0); shellButtons.Children.Add(remove); panel.Children.Add(shellButtons);
-        panel.Children.Add(_notice);
-        panel.Children.Add(DialogLayout.Button("설정 저장", Save_Click, true));
+        var remove = DialogLayout.Button("메뉴 제거", (_, _) => SetExplorerMenu(false)); remove.Margin = new Thickness(10, 8, 0, 0); shellButtons.Children.Add(remove);
+        explorerPanel.Children.Add(shellButtons);
+        tabs.Items.Add(CreateTab("탐색기 메뉴", "우클릭 동작과 표시 위치", explorerPanel));
+        tabs.SelectedIndex = fileTools ? 1 : 0;
+
+        var footer = new StackPanel();
+        footer.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromRgb(227, 231, 237)), Margin = new Thickness(0, 0, 0, 8) });
+        _notice.Margin = new Thickness(0, 2, 0, 8);
+        _notice.MaxHeight = 64;
+        footer.Children.Add(_notice);
+        var footerButtons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var cancel = DialogLayout.Button("취소", (_, _) => Close());
+        cancel.Name = "CancelSettingsButton";
+        cancel.Margin = new Thickness(0, 4, 8, 0);
+        footerButtons.Children.Add(cancel);
+        var save = DialogLayout.Button("설정 저장", Save_Click, true);
+        save.Name = "SaveSettingsButton";
+        footerButtons.Children.Add(save);
+        footer.Children.Add(footerButtons);
+        Grid.SetRow(footer, 2);
+        layout.Children.Add(footer);
+        Content = layout;
+
         try
         {
             _notice.Text = ExplorerIntegration.IsInstalled(MainWindow.GetExecutablePath())
@@ -301,6 +386,28 @@ public sealed class SettingsWindow : Window
         }
         catch (Exception ex) { _notice.Text = ex.Message; }
         Closed += (_, _) => _cancellation.Cancel();
+
+        static StackPanel NewTabPanel() => new() { Margin = new Thickness(20, 16, 20, 20) };
+        static TabItem CreateTab(string headerText, string purpose, UIElement content)
+        {
+            var body = new DockPanel();
+            var hint = new TextBlock
+            {
+                Text = purpose,
+                FontSize = 11,
+                Foreground = Brushes.SlateGray,
+                Margin = new Thickness(20, 12, 20, 0)
+            };
+            DockPanel.SetDock(hint, Dock.Top);
+            body.Children.Add(hint);
+            body.Children.Add(new ScrollViewer
+            {
+                Content = content,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            });
+            return new TabItem { Header = headerText, Content = body };
+        }
     }
 
     private async void Check_Click(object sender, RoutedEventArgs e)

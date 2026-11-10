@@ -12,6 +12,7 @@ namespace MoaVcs.UiSmoke;
 internal static class Program
 {
     private static string? _fixture;
+    private static string? _commitFixture;
     private static string? _loreFixture;
     private static string? _loreSettingsFile;
     [STAThread]
@@ -56,10 +57,14 @@ internal static class Program
             if (!string.IsNullOrWhiteSpace(notice)) throw new InvalidOperationException("Repository error: " + notice);
             for (var i = 0; i < 20; i++) Pump();
             Render(repoWindow, Path.Combine(output, "workspace.png"));
+            RenderAtMinimum(repoWindow, Path.Combine(output, "workspace-min.png"));
             var grid = (DataGrid)repoWindow.FindName("ChangesGrid");
             if (grid.Items.Count != 2) throw new InvalidOperationException("Expected two fixture changes.");
+            var providerMenu = (MenuItem)repoWindow.FindName("ProviderMenu");
+            if (providerMenu.Items.Cast<MenuItem>().Count(item => item.IsCheckable && item.IsChecked) != 1)
+                throw new InvalidOperationException("The provider menu must show exactly one active VCS.");
             grid.SelectedItem = grid.Items.Cast<MoaVcs.Core.FileChange>().Single(c => c.Path == "README.md");
-            ((Button)repoWindow.FindName("FileDiffButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ((MenuItem)repoWindow.FindName("FileDiffButton")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             deadline = DateTime.UtcNow.AddSeconds(20);
             while (inspections.Count < 1 && DateTime.UtcNow < deadline && ((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible) Pump();
             if (inspections.Count != 1) throw new InvalidOperationException("Diff command did not open viewer: " + ((TextBlock)repoWindow.FindName("NoticeText")).Text);
@@ -67,7 +72,7 @@ internal static class Program
             if (comparisonGrid.Items.Count != 5 || !comparisonGrid.Items.Cast<MoaVcs.Core.ComparisonRow>().Any(r => r.Kind == "added"))
                 throw new InvalidOperationException("Diff view must show committed and added lines.");
             Render(inspections[0], Path.Combine(output, "diff.png"));
-            ((Button)repoWindow.FindName("FileBlameButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            ((MenuItem)repoWindow.FindName("FileBlameButton")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             deadline = DateTime.UtcNow.AddSeconds(20);
             while (inspections.Count < 2 && DateTime.UtcNow < deadline && ((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible) Pump();
             if (inspections.Count != 2) throw new InvalidOperationException("Blame command did not open viewer: " + ((TextBlock)repoWindow.FindName("NoticeText")).Text);
@@ -89,12 +94,16 @@ internal static class Program
             if (((DataGrid)repoWindow.FindName("HistoryGrid")).Items.Count != 1) throw new InvalidOperationException("History view did not load the fixture commit.");
             RunStartupActionSmoke(settings, _fixture, scratch);
             RunCancelledOperationSmoke(settings, _fixture);
+            RunCommitStagingSmoke(settings, scratch);
             RunFirstPushSmoke(scratch);
             RunRemoteSettingsSmoke(settings, _fixture, output);
             // Settings dialog initialization and layout must not install registry keys.
             var opened = new List<Uri>();
             var settingsWindow = new SettingsWindow(new AppSettings(), settings, new MoaVcs.Core.ProcessCommandRunner(), opened.Add);
+            var settingsTabs = FindSettingsTabs(settingsWindow);
+            SelectSettingsTab(settingsWindow, settingsTabs, 0);
             Render(settingsWindow, Path.Combine(output, "settings.png"));
+            RenderAtMinimum(settingsWindow, Path.Combine(output, "settings-min.png"));
             foreach (var kind in Enum.GetValues<MoaVcs.Core.VcsKind>())
             {
                 var download = Descendants((DependencyObject)settingsWindow.Content).OfType<Button>().Single(button => button.Name == "Download" + kind);
@@ -102,22 +111,27 @@ internal static class Program
                 if (opened[^1] != VcsTools.Get(kind).DownloadUrl) throw new InvalidOperationException("Wrong download URL for " + kind);
             }
             if (opened.Count != 4) throw new InvalidOperationException("All VCS download buttons must work.");
+            SelectSettingsTab(settingsWindow, settingsTabs, 1);
+            Render(settingsWindow, Path.Combine(output, "settings-file-tools.png"));
             var toolOptions = Descendants((DependencyObject)settingsWindow.Content).OfType<CheckBox>().Where(c => Equals(c.Content, "외부 도구 사용")).ToList();
             if (toolOptions.Count != 2 || toolOptions.Any(c => c.IsChecked == true)) throw new InvalidOperationException("Diff and blame must default to internal tools.");
-            ((ScrollViewer)settingsWindow.Content).ScrollToVerticalOffset(520);
-            Pump();
-            Render(settingsWindow, Path.Combine(output, "settings-file-tools.png"));
+            var fileToolsSettings = new SettingsWindow(new AppSettings(), settings, new MoaVcs.Core.ProcessCommandRunner(), opened.Add, fileTools: true);
+            if (FindSettingsTabs(fileToolsSettings).SelectedIndex != 1)
+                throw new InvalidOperationException("The file-tools shortcut must open the comparison and history settings tab.");
+            SelectSettingsTab(fileToolsSettings, FindSettingsTabs(fileToolsSettings), 1);
+            Render(fileToolsSettings, Path.Combine(output, "settings-file-tools-shortcut.png"));
+            SelectSettingsTab(settingsWindow, settingsTabs, 2);
+            Render(settingsWindow, Path.Combine(output, "settings-explorer.png"));
             var menuOptions = Descendants((DependencyObject)settingsWindow.Content).OfType<CheckBox>()
                 .Where(c => c.Name is "ExplorerCommitTopLevel" or "ExplorerUpdateTopLevel").ToList();
             if (menuOptions.Count != 2 || menuOptions.Any(c => c.IsChecked != true))
                 throw new InvalidOperationException("Explorer shortcuts must default to the first menu level.");
-            ((ScrollViewer)settingsWindow.Content).ScrollToEnd();
-            Pump();
-            Render(settingsWindow, Path.Combine(output, "settings-explorer.png"));
             var submenuSettingsWindow = new SettingsWindow(new AppSettings
             {
                 ExplorerMenu = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = false }
             }, settings, new MoaVcs.Core.ProcessCommandRunner(), opened.Add);
+            var submenuTabs = FindSettingsTabs(submenuSettingsWindow);
+            SelectSettingsTab(submenuSettingsWindow, submenuTabs, 2);
             var submenuContent = (FrameworkElement)submenuSettingsWindow.Content;
             var submenuSize = new Size(submenuSettingsWindow.Width, submenuSettingsWindow.Height - 32);
             submenuContent.Measure(submenuSize);
@@ -152,6 +166,7 @@ internal static class Program
         finally
         {
             DeleteSmokePath(_fixture);
+            DeleteSmokePath(_commitFixture);
             DeleteSmokePath(_loreFixture);
             if (_loreSettingsFile is not null && IsInsideLocal(_loreSettingsFile) && File.Exists(_loreSettingsFile))
                 File.Delete(_loreSettingsFile);
@@ -206,7 +221,7 @@ internal static class Program
         if (changed is null) throw new InvalidOperationException("Lore status did not detect the modified fixture file.");
         changes.SelectedItem = changed;
 
-        ((Button)window.FindName("FileDiffButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((MenuItem)window.FindName("FileDiffButton")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         deadline = DateTime.UtcNow.AddSeconds(45);
         while (inspections.Count < 1 && DateTime.UtcNow < deadline) Pump();
         if (inspections.Count < 1) throw new InvalidOperationException("Lore compare did not open an inspection window: " + ((TextBlock)window.FindName("NoticeText")).Text);
@@ -217,7 +232,7 @@ internal static class Program
             throw new InvalidOperationException("Lore compare did not show the committed baseline against the modified working file.");
         Render(inspections[0], Path.Combine(output, "lore-diff.png"));
 
-        ((Button)window.FindName("FileBlameButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((MenuItem)window.FindName("FileBlameButton")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         deadline = DateTime.UtcNow.AddSeconds(45);
         while (inspections.Count < 2 && DateTime.UtcNow < deadline) Pump();
         if (inspections.Count < 2) throw new InvalidOperationException("Lore blame did not open an inspection window: " + ((TextBlock)window.FindName("NoticeText")).Text);
@@ -295,7 +310,7 @@ internal static class Program
         });
         if (GitOutput("remote", "get-url", "origin").Trim() != original)
             throw new InvalidOperationException("Canceling remote settings changed origin.");
-        if (((Button)canceled.FindName("RemoteButton")).IsEnabled != true)
+        if (((MenuItem)canceled.FindName("RemoteButton")).IsEnabled != true)
             throw new InvalidOperationException("The repository origin button must be available after loading Git.");
         canceled.Width = 1100;
         canceled.Height = 740;
@@ -346,7 +361,7 @@ internal static class Program
             {
                 while ((((Grid)window.FindName("RepositoryPanel")).Visibility != Visibility.Visible ||
                         ((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible) && DateTime.UtcNow < deadline) Pump();
-                ((Button)window.FindName("RemoteButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                ((MenuItem)window.FindName("RemoteButton")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             }
             while ((!shown || ((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible) && DateTime.UtcNow < deadline) Pump();
             if (!shown || ((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible)
@@ -380,6 +395,86 @@ internal static class Program
                 GitBranchConfig() != branchConfig)
                 throw new InvalidOperationException($"Canceled Explorer {action} changed the Git fixture.");
         }
+    }
+
+    private static void RunCommitStagingSmoke(SettingsStore settings, string scratch)
+    {
+        var fixture = _commitFixture = Path.Combine(scratch, "ui-commit-flow-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(fixture);
+        GitAt(fixture, "init", "--initial-branch=master");
+        GitAt(fixture, "config", "user.name", "MoaVCS UI test");
+        GitAt(fixture, "config", "user.email", "test@example.invalid");
+        var file = Path.Combine(fixture, "commit flow.txt");
+        File.WriteAllText(file, "baseline\n");
+        GitAt(fixture, "add", "--", "commit flow.txt");
+        GitAt(fixture, "commit", "-m", "Create commit flow fixture");
+        File.WriteAllText(file, "baseline\nchanged\n");
+
+        var window = new MainWindow(new LaunchOptions(fixture), settings);
+        window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        WaitUntilRepositoryReady(window, TimeSpan.FromSeconds(20), "Commit-flow fixture did not load.");
+        var changes = (DataGrid)window.FindName("ChangesGrid");
+        var commitButton = (Button)window.FindName("CommitButton");
+        var message = (TextBox)window.FindName("CommitMessage");
+        if (changes.Items.Count != 1 || changes.Items.Cast<MoaVcs.Core.FileChange>().Single().IsStaged)
+            throw new InvalidOperationException("Commit-flow fixture should begin with only an unstaged modification.");
+        message.Text = "Record the selected change";
+        if (commitButton.IsEnabled)
+            throw new InvalidOperationException("Commit must remain disabled until a change is staged.");
+
+        changes.SelectedItem = changes.Items[0];
+        ((Button)window.FindName("StageButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WaitUntilIdle(window, TimeSpan.FromSeconds(20), "Staging the commit-flow fixture did not finish.");
+        if (!changes.Items.Cast<MoaVcs.Core.FileChange>().Single().IsStaged || !commitButton.IsEnabled)
+            throw new InvalidOperationException("A staged change and nonempty message should enable commit.");
+
+        changes.SelectedItem = changes.Items[0];
+        ((Button)window.FindName("UnstageButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WaitUntilIdle(window, TimeSpan.FromSeconds(20), "Unstaging the commit-flow fixture did not finish.");
+        if (changes.Items.Cast<MoaVcs.Core.FileChange>().Single().IsStaged || commitButton.IsEnabled)
+            throw new InvalidOperationException("Unstaging the last change must disable commit again.");
+
+        changes.SelectedItem = changes.Items[0];
+        ((Button)window.FindName("StageButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WaitUntilIdle(window, TimeSpan.FromSeconds(20), "Restaging the commit-flow fixture did not finish.");
+        message.Clear();
+        if (!changes.Items.Cast<MoaVcs.Core.FileChange>().Single().IsStaged || commitButton.IsEnabled)
+            throw new InvalidOperationException("Commit must require a message even when changes are staged.");
+        message.Text = "Ready to commit";
+        if (!commitButton.IsEnabled)
+            throw new InvalidOperationException("Commit should enable only when staged changes and a message are present.");
+        Console.WriteLine("PASS: Git commit flow requires staging and a message; unstage disables commit");
+    }
+
+    private static TabControl FindSettingsTabs(SettingsWindow window) =>
+        Descendants((DependencyObject)window.Content).OfType<TabControl>().Single(tabs => tabs.Name == "SettingsTabs");
+
+    private static void SelectSettingsTab(SettingsWindow window, TabControl tabs, int index)
+    {
+        tabs.SelectedIndex = index;
+        window.UpdateLayout();
+        ((FrameworkElement)window.Content).UpdateLayout();
+        Pump();
+        window.UpdateLayout();
+    }
+
+    private static void WaitUntilRepositoryReady(MainWindow window, TimeSpan timeout, string error)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (((Grid)window.FindName("RepositoryPanel")).Visibility != Visibility.Visible && DateTime.UtcNow < deadline) Pump();
+        WaitUntilIdle(window, timeout, error);
+        if (((Grid)window.FindName("RepositoryPanel")).Visibility != Visibility.Visible)
+            throw new InvalidOperationException(error + " " + ((TextBlock)window.FindName("NoticeText")).Text);
+    }
+
+    private static void WaitUntilIdle(MainWindow window, TimeSpan timeout, string error)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible && DateTime.UtcNow < deadline) Pump();
+        if (((Button)window.FindName("CancelButton")).Visibility == Visibility.Visible)
+            throw new TimeoutException(error);
+        if (!string.IsNullOrWhiteSpace(((TextBlock)window.FindName("NoticeText")).Text))
+            throw new InvalidOperationException(error + " " + ((TextBlock)window.FindName("NoticeText")).Text);
     }
 
     private static void RunFirstPushSmoke(string scratch)
@@ -534,5 +629,17 @@ internal static class Program
         bitmap.Render(content);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var output = File.Create(path); encoder.Save(output);
+    }
+
+    private static void RenderAtMinimum(Window window, string path)
+    {
+        var oldWidth = window.Width;
+        var oldHeight = window.Height;
+        window.Width = Math.Max(window.MinWidth, 720);
+        window.Height = Math.Max(window.MinHeight, 520);
+        Render(window, path);
+        window.Width = oldWidth;
+        window.Height = oldHeight;
+        window.UpdateLayout();
     }
 }
