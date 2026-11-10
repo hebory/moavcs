@@ -15,6 +15,18 @@ Git은 인덱스(staging area)에 파일을 올린 뒤, 이미 인덱스에 들�
 
 현재 포함하지 않는 기능: 충돌 해결 편집기, 브랜치 생성·전환 UI, Perforce changelist 제출, 파일 상태 오버레이 아이콘, Windows 11 최상위 현대식 메뉴용 COM/MSIX 확장. 기존 CLI의 인증 설정을 사용하며 GUI 로그인·비밀번호 저장은 제공하지 않습니다.
 
+## 원격 주소 설정
+
+Git 저장소 화면과 탐색기의 **원격 주소…**에서 `origin`을 조회·추가·수정합니다. 주소 편집에는 Git 2.30 이상이 필요합니다. 편집 대상은 저장된 기본 fetch URL 하나입니다. 추가 fetch URL, 별도의 `pushurl`, 다른 remote, 브랜치 추적 설정을 보존합니다. 별도 push URL이 있으면 기본 주소를 바꿔도 push 대상은 유지되며 창에 이 내용을 표시합니다. HTTPS·SSH·Git의 SCP 형식·로컬 경로를 입력할 수 있습니다.
+
+Git의 `insteadOf` / `pushInsteadOf` 규칙이 적용될 수 있으므로 저장된 주소와 실제 사용 주소를 함께 확인할 수 있습니다. 전역 설정·include·worktree 설정, 기본 주소가 중복 등록된 경우 등 편집기에서 안전하게 변경할 수 없는 구성은 이유와 함께 읽기 전용으로 표시합니다. 창을 연 뒤 다른 도구가 원격 설정을 변경했다면 저장을 중단하고 다시 열도록 안내합니다.
+
+주소 저장은 로컬 설정만 변경하며 네트워크 연결, 인증 확인, fetch, pull, push를 수행하지 않습니다. 실제 서버 연결 가능 여부는 이후 사용자가 실행하는 동기화 작업에서 확인합니다. 취소하면 아무 설정도 변경하지 않습니다.
+
+SVN의 relocate와 Perforce의 P4PORT·워크스페이스 설정은 origin과 다른 기능이므로 이 편집기에서 변경하지 않습니다. Lore 0.13.0에는 원격 주소 설정 CLI가 없으며, [공식 설정 문서](https://github.com/EpicGames/lore/blob/main/docs/reference/lore-cli-config.md#remote_url)는 기존 저장소의 `remote_url`을 고정값으로 취급하도록 안내합니다. Lore의 주소를 옮기려면 원하는 원격에서 새 작업 공간을 복제하는 방식을 사용하세요.
+
+Git 동작 기준: [git remote](https://git-scm.com/docs/git-remote), [git config](https://git-scm.com/docs/git-config). 테스트는 임시 Git 저장소의 주소 설정과 기존 설정 보존을 검증하며 원격 서버에는 연결하지 않습니다.
+
 ## 파일 비교와 Blame
 
 | 시스템 | 내장 좌우 비교 | 내장 Blame 기준 |
