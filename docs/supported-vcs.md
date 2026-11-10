@@ -23,6 +23,10 @@ Git의 `insteadOf` / `pushInsteadOf` 규칙이 적용될 수 있으므로 저장
 
 주소 저장은 로컬 설정만 변경하며 네트워크 연결, 인증 확인, fetch, pull, push를 수행하지 않습니다. 실제 서버 연결 가능 여부는 이후 사용자가 실행하는 동기화 작업에서 확인합니다. 취소하면 아무 설정도 변경하지 않습니다.
 
+원격 URL과 upstream은 별도의 설정입니다. URL을 등록한 새 저장소에서 현재 브랜치의 upstream이 없으면 **보내기**가 첫 푸시 성공 후 연결을 설정합니다. 이 동작은 Git 2.37 이상의 `push.autoSetupRemote`를 해당 명령에만 적용합니다. `push.default`가 기본값인 `simple` 또는 `current`, `upstream`일 때 동작하며, 기존 upstream과 사용자의 푸시 대상·refspec 설정은 Git의 규칙을 따릅니다. `push.default=nothing` 등의 제한도 유지합니다. 이 옵션을 전역 또는 저장소 설정 파일에 영구 저장하지 않습니다.
+
+`has no upstream branch`는 원격 URL 저장 실패가 아니라 현재 브랜치의 추적 연결이 없는 상태를 뜻합니다. 첫 푸시에는 연결 설정이 포함되며, 확인창에서 취소하면 저장소 설정과 원격은 바뀌지 않습니다. 실패한 전송을 강제 푸시로 재시도하지 않습니다.
+
 SVN의 relocate와 Perforce의 P4PORT·워크스페이스 설정은 origin과 다른 기능이므로 이 편집기에서 변경하지 않습니다. Lore 0.13.0에는 원격 주소 설정 CLI가 없으며, [공식 설정 문서](https://github.com/EpicGames/lore/blob/main/docs/reference/lore-cli-config.md#remote_url)는 기존 저장소의 `remote_url`을 고정값으로 취급하도록 안내합니다. Lore의 주소를 옮기려면 원하는 원격에서 새 작업 공간을 복제하는 방식을 사용하세요.
 
 Git 동작 기준: [git remote](https://git-scm.com/docs/git-remote), [git config](https://git-scm.com/docs/git-config). 테스트는 임시 Git 저장소의 주소 설정과 기존 설정 보존을 검증하며 원격 서버에는 연결하지 않습니다.
