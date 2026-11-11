@@ -6,6 +6,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using MoaVcs.App;
 using MoaVcs.App.Services;
+using MoaVcs.Core;
 
 namespace MoaVcs.UiSmoke;
 
@@ -13,6 +14,7 @@ internal static class Program
 {
     private static string? _fixture;
     private static string? _commitFixture;
+    private static string? _conflictFixture;
     private static string? _loreFixture;
     private static string? _loreSettingsFile;
     [STAThread]
@@ -95,6 +97,7 @@ internal static class Program
             RunStartupActionSmoke(settings, _fixture, scratch);
             RunCancelledOperationSmoke(settings, _fixture);
             RunCommitStagingSmoke(settings, scratch);
+            RunConflictResolutionSmoke(settings, scratch, output);
             RunFirstPushSmoke(scratch);
             RunRemoteSettingsSmoke(settings, _fixture, output);
             // Settings dialog initialization and layout must not install registry keys.
@@ -167,6 +170,7 @@ internal static class Program
         {
             DeleteSmokePath(_fixture);
             DeleteSmokePath(_commitFixture);
+            DeleteSmokePath(_conflictFixture);
             DeleteSmokePath(_loreFixture);
             if (_loreSettingsFile is not null && IsInsideLocal(_loreSettingsFile) && File.Exists(_loreSettingsFile))
                 File.Delete(_loreSettingsFile);
@@ -444,6 +448,167 @@ internal static class Program
         if (!commitButton.IsEnabled)
             throw new InvalidOperationException("Commit should enable only when staged changes and a message are present.");
         Console.WriteLine("PASS: Git commit flow requires staging and a message; unstage disables commit");
+    }
+
+    private static void RunConflictResolutionSmoke(SettingsStore settings, string scratch, string output)
+    {
+        var fixture = _conflictFixture = Path.Combine(scratch, "ui-conflict-flow-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(fixture);
+        GitAt(fixture, "init", "--initial-branch=main");
+        GitAt(fixture, "config", "user.name", "MoaVCS UI conflict test");
+        GitAt(fixture, "config", "user.email", "conflict-test@example.invalid");
+
+        const string fileName = "merge-conflict.txt";
+        var filePath = Path.Combine(fixture, fileName);
+        static string Content(string side)
+        {
+            var lines = new List<string> { "header" };
+            for (var block = 1; block <= 4; block++)
+            {
+                lines.Add($"value-{block}={side}-{block}");
+                for (var stable = 1; stable <= 12; stable++) lines.Add($"stable-{block}-{stable}");
+            }
+            lines.Add("footer");
+            return string.Join('\n', lines) + "\n";
+        }
+
+        File.WriteAllText(filePath, Content("base"));
+        GitAt(fixture, "add", "--", fileName);
+        GitAt(fixture, "commit", "-m", "Create conflict smoke baseline");
+        GitAt(fixture, "switch", "-c", "incoming");
+        File.WriteAllText(filePath, Content("incoming"));
+        GitAt(fixture, "commit", "-am", "Incoming conflict changes");
+        GitAt(fixture, "switch", "main");
+        File.WriteAllText(filePath, Content("main"));
+        GitAt(fixture, "commit", "-am", "Local conflict changes");
+        var merge = new MoaVcs.Core.ProcessCommandRunner().RunAsync(new MoaVcs.Core.CommandSpec(
+            "git", ["merge", "incoming"], fixture)).GetAwaiter().GetResult();
+        if (merge.Success || !GitAtOutput(fixture, "status", "--porcelain=v1", "--", fileName).StartsWith("UU ", StringComparison.Ordinal))
+            throw new InvalidOperationException("The disposable Git fixture must contain a real two-sided merge conflict.");
+
+        static FileInspectionWindow GetConflictWindow(IReadOnlyList<Window> windows, string entryPoint)
+        {
+            if (windows.Count != 1 || windows[0] is not FileInspectionWindow inspection ||
+                inspection.FindName("ConflictEditor") is not ConflictResolutionView)
+                throw new InvalidOperationException($"{entryPoint} must open the built-in conflict editor.");
+            return inspection;
+        }
+
+        static void WaitForInspection(MainWindow main, List<Window> windows, string entryPoint)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (windows.Count == 0 && DateTime.UtcNow < deadline) Pump();
+            if (windows.Count != 1) throw new TimeoutException($"{entryPoint} did not open within the UI smoke timeout.");
+            WaitUntilIdle(main, TimeSpan.FromSeconds(30), $"{entryPoint} did not finish loading.");
+        }
+
+        static void WaitForConflictAction(ConflictResolutionView editor, MainWindow main, string description)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (editor.IsBusy && DateTime.UtcNow < deadline) Pump();
+            if (editor.IsBusy) throw new TimeoutException(description);
+            WaitUntilIdle(main, TimeSpan.FromSeconds(30), description);
+        }
+
+        // The Explorer --action diff path and the normal file-diff path must reach the
+        // built-in conflict editor with the internal-tool settings used by this fixture.
+        var shellInspections = new List<Window>();
+        var shellWindow = new MainWindow(new LaunchOptions(filePath, "diff"), settings, shellInspections.Add);
+        shellWindow.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        WaitForInspection(shellWindow, shellInspections, "Explorer diff action");
+        GetConflictWindow(shellInspections, "Explorer diff action").Close();
+
+        var internalInspections = new List<Window>();
+        var internalWindow = new MainWindow(new LaunchOptions(fixture), settings, internalInspections.Add);
+        internalWindow.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        WaitUntilRepositoryReady(internalWindow, TimeSpan.FromSeconds(30), "Conflict fixture did not load.");
+        var changes = (DataGrid)internalWindow.FindName("ChangesGrid");
+        var conflict = changes.Items.Cast<MoaVcs.Core.FileChange>().Single(c => c.Path == fileName);
+        if (!conflict.IsConflicted) throw new InvalidOperationException("The GUI must mark the merge fixture as conflicted.");
+        changes.SelectedItem = conflict;
+        ((TextBox)internalWindow.FindName("CommitMessage")).Text = "Must wait for resolution";
+        if (((Button)internalWindow.FindName("StageButton")).IsEnabled ||
+            ((Button)internalWindow.FindName("UnstageButton")).IsEnabled ||
+            ((Button)internalWindow.FindName("CommitButton")).IsEnabled)
+            throw new InvalidOperationException("Conflicted files must disable stage, unstage, and commit.");
+        if (!((TextBlock)internalWindow.FindName("WorkflowHint")).Text.Contains("충돌 해결", StringComparison.Ordinal))
+            throw new InvalidOperationException("The workflow guide must direct the user to resolve conflicts first.");
+
+        ((MenuItem)internalWindow.FindName("FileDiffButton")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        WaitForInspection(internalWindow, internalInspections, "File Diff");
+        GetConflictWindow(internalInspections, "File Diff").Close();
+        internalInspections.Clear();
+
+        ((MenuItem)internalWindow.FindName("ConflictMenu")).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        WaitForInspection(internalWindow, internalInspections, "File Tools conflict command");
+        var inspectionWindow = GetConflictWindow(internalInspections, "File Tools conflict command");
+        var editor = (ConflictResolutionView)inspectionWindow.FindName("ConflictEditor");
+        var blocks = (ComboBox)editor.FindName("ConflictBlocks");
+        var result = (TextBox)editor.FindName("ConflictResult");
+        if (blocks.Items.Count != 4) throw new InvalidOperationException("The merge fixture should expose four conflict blocks.");
+        if (!result.SelectedText.Contains("<<<<<<<", StringComparison.Ordinal))
+            throw new InvalidOperationException("Selecting a conflict block must move the result editor to that block.");
+        Render(inspectionWindow, Path.Combine(output, "conflict.png"));
+        RenderAtMinimum(inspectionWindow, Path.Combine(output, "conflict-min.png"));
+
+        var initialDraft = result.Text;
+        result.Select(result.Text.IndexOf("main-1", StringComparison.Ordinal), 6);
+        result.SelectedText = "edited-one";
+        if (result.SelectedText.Contains("<<<<<<<", StringComparison.Ordinal) || result.SelectionLength > 20)
+            throw new InvalidOperationException("Typing in a conflict must not select the whole block and replace it on the next keystroke.");
+        result.Text = initialDraft;
+
+        blocks.SelectedIndex = 0;
+        ((Button)editor.FindName("ConflictUseLeft")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var afterLeft = ConflictMarkers.Parse(result.Text);
+        if (afterLeft.Count != 3 || result.Text.Contains("value-1=incoming-1", StringComparison.Ordinal) ||
+            !result.Text.Contains("value-1=main-1", StringComparison.Ordinal) || !result.Text.Contains("value-2=incoming-2", StringComparison.Ordinal))
+            throw new InvalidOperationException($"Applying the left side must replace only the selected conflict block. Remaining={afterLeft.Count}; main-1={result.Text.Contains("value-1=main-1", StringComparison.Ordinal)}; incoming-1={result.Text.Contains("value-1=incoming-1", StringComparison.Ordinal)}; status={((TextBlock)editor.FindName("ConflictStatus")).Text}");
+
+        blocks.SelectedIndex = 0;
+        ((Button)editor.FindName("ConflictUseRight")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (ConflictMarkers.Parse(result.Text).Count != 2 || result.Text.Contains("value-2=main-2", StringComparison.Ordinal) ||
+            !result.Text.Contains("value-2=incoming-2", StringComparison.Ordinal) || !result.Text.Contains("value-3=main-3", StringComparison.Ordinal))
+            throw new InvalidOperationException("Applying the right side must preserve other conflict blocks.");
+
+        blocks.SelectedIndex = 0;
+        ((Button)editor.FindName("ConflictUseBoth")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (ConflictMarkers.Parse(result.Text).Count != 1 || !result.Text.Contains("value-3=main-3", StringComparison.Ordinal) ||
+            !result.Text.Contains("value-3=incoming-3", StringComparison.Ordinal) || !result.Text.Contains("value-4=main-4", StringComparison.Ordinal))
+            throw new InvalidOperationException("Applying both sides must change only that block and leave the remaining conflict intact.");
+
+        result.Text += "\nmanual edit beside the unresolved block\n";
+        if (((Button)editor.FindName("ConflictResolve")).IsEnabled)
+            throw new InvalidOperationException("Resolve must stay disabled while conflict markers remain or edits are unsaved.");
+        ((Button)editor.FindName("ConflictSave")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WaitForConflictAction(editor, internalWindow, "Saving the partially resolved conflict did not finish.");
+        RenderAtMinimum(inspectionWindow, Path.Combine(output, "conflict-saved-min.png"));
+        var savedStages = GitAtOutput(fixture, "ls-files", "--unmerged", "--", fileName);
+        if (string.IsNullOrWhiteSpace(savedStages) ||
+            !File.ReadAllText(filePath).Contains("manual edit beside the unresolved block", StringComparison.Ordinal) ||
+            !((DataGrid)internalWindow.FindName("ChangesGrid")).Items.Cast<MoaVcs.Core.FileChange>().Any(c => c.IsConflicted))
+            throw new InvalidOperationException("Saving must retain unresolved index stages, preserve edits, and refresh the main conflict state.");
+
+        var lastBlock = ConflictMarkers.Parse(result.Text).Single();
+        result.Text = result.Text[..lastBlock.Start] + "manually resolved fourth block\n" +
+            result.Text[(lastBlock.Start + lastBlock.Length)..];
+        if (((Button)editor.FindName("ConflictResolve")).IsEnabled)
+            throw new InvalidOperationException("Resolve must wait until direct edits are saved.");
+        ((Button)editor.FindName("ConflictSave")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WaitForConflictAction(editor, internalWindow, "Saving the finished conflict did not finish.");
+        if (ConflictMarkers.ContainsMarkers(File.ReadAllText(filePath)) ||
+            string.IsNullOrWhiteSpace(GitAtOutput(fixture, "ls-files", "--unmerged", "--", fileName)) ||
+            !((Button)editor.FindName("ConflictResolve")).IsEnabled)
+            throw new InvalidOperationException("A marker-free saved result should enable a separate resolve action without staging automatically.");
+
+        ((Button)editor.FindName("ConflictResolve")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WaitForConflictAction(editor, internalWindow, "Marking the conflict resolved did not finish.");
+        if (!string.IsNullOrWhiteSpace(GitAtOutput(fixture, "ls-files", "--unmerged", "--", fileName)) ||
+            ((DataGrid)internalWindow.FindName("ChangesGrid")).Items.Cast<MoaVcs.Core.FileChange>().Any(c => c.IsConflicted) ||
+            !((Button)internalWindow.FindName("CommitButton")).IsEnabled || !result.IsReadOnly)
+            throw new InvalidOperationException("Resolve must clear Git stages, refresh the main view, retain the result, and leave commit separate.");
+        inspectionWindow.Close();
+        Console.WriteLine("PASS: Git conflict editor via File Tools and Explorer diff; block choices, direct edit, separate save/resolve and layout");
     }
 
     private static TabControl FindSettingsTabs(SettingsWindow window) =>

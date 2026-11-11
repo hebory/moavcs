@@ -234,8 +234,9 @@ public partial class MainWindow : Window
         var caps = _provider?.Capabilities ?? VcsCapabilities.None;
         bool Can(VcsCapabilities cap) => !_busy && _repository is not null && caps.HasFlag(cap);
         var hasSelection = ChangesGrid.SelectedItems.Count > 0;
-        StageButton.IsEnabled = Can(VcsCapabilities.Stage) && hasSelection;
-        UnstageButton.IsEnabled = Can(VcsCapabilities.Unstage) && hasSelection &&
+        var selectedConflict = ChangesGrid.SelectedItems.Cast<FileChange>().Any(c => c.IsConflicted);
+        StageButton.IsEnabled = Can(VcsCapabilities.Stage) && hasSelection && !selectedConflict;
+        UnstageButton.IsEnabled = Can(VcsCapabilities.Unstage) && hasSelection && !selectedConflict &&
             (_provider?.Kind != VcsKind.Git || ChangesGrid.SelectedItems.Cast<FileChange>().Any(c => c.IsStaged));
         StageButton.Visibility = caps.HasFlag(VcsCapabilities.Stage) ? Visibility.Visible : Visibility.Collapsed;
         UnstageButton.Visibility = caps.HasFlag(VcsCapabilities.Unstage) ? Visibility.Visible : Visibility.Collapsed;
@@ -245,7 +246,7 @@ public partial class MainWindow : Window
         PushButton.Visibility = caps.HasFlag(VcsCapabilities.Push) ? Visibility.Visible : Visibility.Collapsed;
         PushButton.IsEnabled = Can(VcsCapabilities.Push);
         CommitMessage.IsEnabled = Can(VcsCapabilities.Commit);
-        CommitButton.IsEnabled = Can(VcsCapabilities.Commit) && !string.IsNullOrWhiteSpace(CommitMessage.Text) &&
+        CommitButton.IsEnabled = Can(VcsCapabilities.Commit) && !_changes.Any(c => c.IsConflicted) && !string.IsNullOrWhiteSpace(CommitMessage.Text) &&
             (_provider?.Kind == VcsKind.Svn ? hasSelection : _changes.Any(c => c.IsStaged));
         HistoryTab.IsEnabled = caps.HasFlag(VcsCapabilities.History);
         StagedDiffCheck.Visibility = _provider?.Kind == VcsKind.Git ? Visibility.Visible : Visibility.Collapsed;
@@ -255,6 +256,7 @@ public partial class MainWindow : Window
         FileToolsMenu.IsEnabled = !_busy && _repository is not null;
         var singleFile = ChangesGrid.SelectedItems.Count == 1;
         FileDiffButton.IsEnabled = Can(VcsCapabilities.Diff) && singleFile;
+        ConflictMenu.IsEnabled = Can(VcsCapabilities.ConflictResolution) && singleFile && selectedConflict;
         BrowseDiffButton.IsEnabled = Can(VcsCapabilities.Diff);
         var canBlame = Can(VcsCapabilities.Blame) || (!_busy && _repository is not null &&
             _settings.ExternalTools.GetValueOrDefault(ExternalToolKind.Blame) is { UseExternal: true } external &&
@@ -279,7 +281,15 @@ public partial class MainWindow : Window
             VcsKind.Perforce => "변경 등록 후 P4V 또는 p4 CLI에서 변경 목록을 제출하세요.",
             _ => $"커밋에 포함된 {staged}개 파일의 변경을 함께 기록합니다. 목록의 선택과 커밋 범위는 다릅니다."
         };
-        if (_changes.Count == 0)
+        var conflicts = _changes.Count(c => c.IsConflicted);
+        if (conflicts > 0)
+        {
+            WorkflowTitle.Text = $"충돌 {conflicts}개를 먼저 해결하세요";
+            WorkflowHint.Text = _provider?.Capabilities.HasFlag(VcsCapabilities.ConflictResolution) == true
+                ? "충돌 파일을 선택하고 ‘파일 도구 → 선택 파일의 충돌 해결’에서 결과를 편집·저장한 뒤 해결로 표시하세요."
+                : $"{_provider?.Name}의 충돌은 전용 VCS 도구에서 해결한 뒤 새로 고침하세요. 내장 편집은 Git과 SVN의 텍스트 충돌을 지원합니다.";
+        }
+        else if (_changes.Count == 0)
         {
             WorkflowTitle.Text = "기록할 변경이 없습니다";
             WorkflowHint.Text = "파일을 수정한 뒤 새로 고침하세요. 이전 기록은 ‘커밋 이력’에서, 개별 파일 비교는 ‘파일 도구’에서 확인할 수 있습니다.";
@@ -347,6 +357,20 @@ public partial class MainWindow : Window
                     Log("외부 blame 도구를 열었습니다: " + selected.Path);
                 }
                 else viewer = new FileInspectionWindow(result!);
+            }
+            else if (!external && selected.IsConflicted && provider.Capabilities.HasFlag(VcsCapabilities.ConflictResolution))
+            {
+                var conflict = await provider.GetConflictAsync(repository.RootPath, selected, token);
+                var conflictWindow = new FileInspectionWindow(provider, conflict);
+                conflictWindow.ConflictChanged += async (_, _) =>
+                {
+                    // Saving and resolving can finish while an earlier refresh is still reading status.
+                    while (_busy && _provider == provider && _repository?.RootPath == repository.RootPath)
+                        await Task.Delay(100);
+                    if (_provider == provider && _repository?.RootPath == repository.RootPath)
+                        await RefreshAsync();
+                };
+                viewer = conflictWindow;
             }
             else
             {
@@ -502,6 +526,12 @@ public partial class MainWindow : Window
             return;
         }
         var selectedChanges = ChangesGrid.SelectedItems.Cast<FileChange>();
+        if ((operation == VcsOperation.Commit && _changes.Any(c => c.IsConflicted)) ||
+            (operation is VcsOperation.Stage or VcsOperation.Unstage && selectedChanges.Any(c => c.IsConflicted)))
+        {
+            ShowNotice("충돌 파일은 먼저 ‘파일 도구 → 선택 파일의 충돌 해결’에서 해결하세요. 지원하지 않는 충돌은 전용 VCS 도구를 사용하세요.");
+            return;
+        }
         if (operation == VcsOperation.Unstage && _provider.Kind == VcsKind.Git)
             selectedChanges = selectedChanges.Where(c => c.IsStaged);
         // A renamed row represents both paths; unstaging only the destination leaves a staged deletion.

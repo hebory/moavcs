@@ -46,6 +46,7 @@
       </MenuItem>
       <MenuItem x:Name="FileToolsMenu" Header="파일 도구 ▾" Padding="14,10" IsEnabled="False">
        <MenuItem x:Name="FileDiffButton" Header="선택 파일 비교 (Diff)" Click="FileDiff_Click"/>
+       <MenuItem x:Name="ConflictMenu" Header="선택 파일의 충돌 해결…" Click="InternalDiff_Click"/>
        <MenuItem x:Name="FileBlameButton" Header="선택 파일의 행별 이력 (Blame)" Click="FileBlame_Click"/>
        <MenuItem Header="내장 도구로 열기">
         <MenuItem x:Name="InternalDiffMenu" Header="선택 파일 비교" Click="InternalDiff_Click"/>

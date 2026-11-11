@@ -19,6 +19,27 @@ public sealed class FileInspectionWindow : Window
     private TabItem? _rowsTab;
     private IReadOnlyList<ComparisonRow>? _comparisonRows;
     private IReadOnlyList<BlameLine>? _blameRows;
+    public event EventHandler? ConflictChanged;
+
+    public FileInspectionWindow(IVcsProvider provider, ConflictFile conflict)
+    {
+        Initialize("충돌 해결", Path.Combine(conflict.RootPath, conflict.Path),
+            "충돌 구간을 선택해 내용을 합치거나 결과를 직접 편집하세요. 저장한 다음 해결로 표시합니다. 커밋은 별도로 진행합니다.");
+        ((FrameworkElement)_toolbar.Parent).Visibility = Visibility.Collapsed;
+        var editor = new ConflictResolutionView(provider, conflict) { Name = "ConflictEditor" };
+        RegisterName(editor.Name, editor);
+        editor.FileChanged += (_, _) => ConflictChanged?.Invoke(this, EventArgs.Empty);
+        SetBody(editor);
+        _status.Visibility = Visibility.Collapsed;
+        Closing += (_, e) =>
+        {
+            if (editor.IsBusy) { e.Cancel = true; return; }
+            if (editor.HasUnsavedChanges && MessageBox.Show(this,
+                "저장하지 않은 편집 내용이 있습니다. 편집 내용을 버리고 닫을까요?", "충돌 편집 닫기",
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+                e.Cancel = true;
+        };
+    }
 
     public FileInspectionWindow(FileComparison comparison, LineDiffResult diff, string patch)
     {
