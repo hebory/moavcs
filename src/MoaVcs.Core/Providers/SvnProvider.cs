@@ -3,7 +3,7 @@ using System.Xml.Linq;
 namespace MoaVcs.Core.Providers;
 
 /// <summary>Subversion client adapter. SVN has no index, so commits are always scoped to the selected paths.</summary>
-public sealed class SvnProvider : IVcsProvider
+public sealed partial class SvnProvider : IVcsProvider
 {
     private readonly ICommandRunner _runner;
     public SvnProvider(ICommandRunner? runner = null, string executable = "svn")
@@ -12,7 +12,7 @@ public sealed class SvnProvider : IVcsProvider
     public VcsKind Kind => VcsKind.Svn;
     public string Name => "Subversion";
     public string Executable { get; }
-    public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage | VcsCapabilities.Commit | VcsCapabilities.Update | VcsCapabilities.Clone | VcsCapabilities.FileComparison | VcsCapabilities.Blame;
+    public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage | VcsCapabilities.Commit | VcsCapabilities.Update | VcsCapabilities.Clone | VcsCapabilities.FileComparison | VcsCapabilities.Blame | VcsCapabilities.ConflictResolution;
 
     public async Task<RepositoryInfo> GetRepositoryAsync(string path, CancellationToken cancellationToken = default)
     {
@@ -42,7 +42,7 @@ public sealed class SvnProvider : IVcsProvider
             if (wc is null) continue;
             var status = wc.Attribute("item")?.Value ?? "normal";
             var props = wc.Attribute("props")?.Value;
-            var conflicted = wc.Attribute("tree-conflicted")?.Value == "true" || status == "conflicted";
+            var conflicted = wc.Attribute("tree-conflicted")?.Value == "true" || status == "conflicted" || props == "conflicted";
             if (status == "normal" && (props is null or "none" or "normal") && !conflicted) continue;
             var path = item.Attribute("path")?.Value ?? string.Empty;
             var full = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));

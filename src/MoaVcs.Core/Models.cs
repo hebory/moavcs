@@ -7,7 +7,7 @@ public enum VcsCapabilities
 {
     None = 0, Diff = 1, History = 2, Stage = 4, Unstage = 8,
     Commit = 16, Update = 32, Push = 64, Initialize = 128, Clone = 256,
-    Blame = 512, FileComparison = 1024, RemoteUrl = 2048
+    Blame = 512, FileComparison = 1024, RemoteUrl = 2048, ConflictResolution = 4096
 }
 
 public enum VcsOperation { Stage, Unstage, Commit, Update, Push, Initialize, Clone }
@@ -16,7 +16,9 @@ public sealed record RepositoryInfo(VcsKind Kind, string RootPath, string Branch
 
 public sealed record FileChange(string Path, string Status, string IndexStatus = "", string WorkTreeStatus = "", string? OriginalPath = null)
 {
-    public bool IsStaged => IndexStatus.Length > 0 && IndexStatus != " " && IndexStatus != "?";
+    public bool IsConflicted => Status.Equals("conflict", StringComparison.OrdinalIgnoreCase) ||
+        Status.Equals("conflicted", StringComparison.OrdinalIgnoreCase);
+    public bool IsStaged => !IsConflicted && IndexStatus.Length > 0 && IndexStatus != " " && IndexStatus != "?";
 }
 
 public sealed record HistoryEntry(string Id, string Author, string Date, string Message);
@@ -66,6 +68,12 @@ public interface IVcsProvider
         throw new VcsException($"{Name}에서는 아직 파일 비교를 지원하지 않습니다.");
     Task<BlameResult> GetBlameAsync(string root, FileChange file, CancellationToken cancellationToken = default) =>
         throw new VcsException($"{Name}에서는 아직 작성자 이력 보기를 지원하지 않습니다.");
+    Task<ConflictFile> GetConflictAsync(string root, FileChange file, CancellationToken cancellationToken = default) =>
+        throw new VcsException($"{Name}의 충돌 해결은 전용 VCS 도구를 사용하세요. 내장 충돌 편집은 Git과 SVN의 텍스트 충돌을 지원합니다.");
+    Task<ConflictFile> SaveConflictAsync(ConflictFile expected, string text, CancellationToken cancellationToken = default) =>
+        throw new VcsException($"{Name}의 내장 충돌 편집을 지원하지 않습니다.");
+    Task MarkConflictResolvedAsync(ConflictFile expected, CancellationToken cancellationToken = default) =>
+        throw new VcsException($"{Name}의 내장 충돌 해결 표시를 지원하지 않습니다.");
     Task<RemoteInfo> GetRemoteAsync(string root, CancellationToken cancellationToken = default) =>
         throw new VcsException($"{Name}에서는 아직 원격 주소 보기를 지원하지 않습니다.");
     Task SetRemoteUrlAsync(string root, string url, RemoteInfo expected, CancellationToken cancellationToken = default) =>

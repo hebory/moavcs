@@ -3,7 +3,7 @@ using System.Text;
 namespace MoaVcs.Core.Providers;
 
 /// <summary>Git adapter built on the official git executable.</summary>
-public sealed class GitProvider(ICommandRunner runner, string executable = "git") : IVcsProvider
+public sealed partial class GitProvider(ICommandRunner runner, string executable = "git") : IVcsProvider
 {
     private const string ExternalOriginConfigReadOnlyReason = "origin URL이 전역, include 또는 worktree 설정에서 오므로 안전하게 보존할 수 없어 읽기 전용입니다.";
     public const long MaxTextSnapshotBytes = TextSnapshot.MaxBytes;
@@ -15,7 +15,7 @@ public sealed class GitProvider(ICommandRunner runner, string executable = "git"
     public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage |
         VcsCapabilities.Unstage | VcsCapabilities.Commit | VcsCapabilities.Update | VcsCapabilities.Push |
         VcsCapabilities.Initialize | VcsCapabilities.Clone | VcsCapabilities.FileComparison | VcsCapabilities.Blame |
-        VcsCapabilities.RemoteUrl;
+        VcsCapabilities.RemoteUrl | VcsCapabilities.ConflictResolution;
 
     public async Task<RemoteInfo> GetRemoteAsync(string root, CancellationToken cancellationToken = default)
     {
@@ -169,6 +169,14 @@ public sealed class GitProvider(ICommandRunner runner, string executable = "git"
         ArgumentNullException.ThrowIfNull(file);
         root = NormalizeRoot(root);
         var path = ValidateRelativePath(root, file.Path);
+        if (file.IsConflicted)
+        {
+            if (staged)
+                throw new VcsException($"'{path}'은 충돌 상태라 일반 스테이지 비교를 할 수 없습니다. 충돌 비교를 여세요.");
+            var conflict = await GetConflictAsync(root, file, cancellationToken).ConfigureAwait(false);
+            return new FileComparison(path, conflict.LeftLabel, conflict.RightLabel,
+                conflict.LeftText, conflict.RightText);
+        }
         string? left;
         string? right;
         string leftLabel;

@@ -10,7 +10,8 @@ internal static class Program
             if (args.SequenceEqual(["--shell"])) { await ShellTests.RunAsync(); Console.WriteLine("PASS: Explorer menu layout, launch actions, command quoting and settings persistence"); return 0; }
             if (args.SequenceEqual(["--remote"])) { await RemoteTests.RunAsync(); Console.WriteLine("PASS: Git origin addresses, preservation and validation"); return 0; }
             if (args.SequenceEqual(["--push"])) { await PushTests.RunAsync(); Console.WriteLine("PASS: Git first push, upstream tracking and push configuration preservation"); return 0; }
-            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push or no arguments.");
+            if (args.SequenceEqual(["--conflicts"])) { await RunConflictChecks(); return 0; }
+            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push, --conflicts or no arguments.");
             TextDiffTests.Run();
             Console.WriteLine("PASS: line comparison alignment, bounded fallback, Unicode, cancellation and newline labels");
             await ProcessTests.RunAsync();
@@ -21,6 +22,7 @@ internal static class Program
             Console.WriteLine("PASS: Git origin addresses, preservation and validation");
             await PushTests.RunAsync();
             Console.WriteLine("PASS: Git first push, upstream tracking and push configuration preservation");
+            await RunConflictChecks();
             await ProviderTests.RunAsync();
             Console.WriteLine("PASS: SVN, Perforce and Lore adapter contracts");
             await RunLoreChecks();
@@ -40,5 +42,15 @@ internal static class Program
         await LoreBlameTests.RunAsync();
         Console.WriteLine("PASS: Lore audit ranges, attribution metadata, bounds and malformed output");
         await LoreIntegrationTests.RunAsync();
+    }
+
+    private static async Task RunConflictChecks()
+    {
+        await ConflictTextTests.RunAsync();
+        Console.WriteLine("PASS: merge markers, Unicode, BOM/newlines, bounded atomic saves and stale file rejection");
+        await GitConflictTests.RunAsync();
+        Console.WriteLine("PASS: actual Git conflict snapshots, staged resolution and stale conflict rejection");
+        await SvnConflictTests.RunAsync();
+        Console.WriteLine("PASS: SVN text conflict resolution fixtures (no SVN server connection)");
     }
 }
