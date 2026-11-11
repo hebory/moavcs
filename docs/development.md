@@ -5,6 +5,7 @@
 - Windows 10/11
 - .NET 8 SDK (WPF 구성 요소 포함, 빌드 시) 또는 .NET 8 Desktop Runtime (실행 시)
 - 사용하려는 버전 관리 시스템의 CLI
+- 셸 확장 빌드·검증·패키징: Visual Studio 2022의 C++ x64 빌드 도구(v143)와 Windows SDK
 
 프로젝트는 외부 NuGet 패키지를 사용하지 않습니다.
 
@@ -30,12 +31,24 @@ $env:MOAVCS_LORE_EXE = .\scripts\get-test-lore.ps1
 
 환경 변수가 없으면 실제 Lore 검사는 `SKIP`으로 표시하고 fixture 검사는 실행합니다. 잘못된 경로가 지정되면 실패합니다. 코어의 Lore 검사만 실행하려면 `dotnet run --project tests/MoaVcs.Tests -- --lore`를 사용하세요. 실제 검사는 오프라인 임시 저장소와 명시적인 테스트 identity를 사용하며 원격 서버 인증을 검증하지 않습니다.
 
+## 네이티브 상태 배지
+
+`scripts/build-shell.ps1 -Test`는 x64 C++ 셸 확장과 격리된 캐시·COM 테스트를 빌드합니다. `verify.ps1`에도 포함되며 로컬 검사에서는 레지스트리를 등록하지 않습니다. `dotnet run --project tests/MoaVcs.Tests -- --overlay`는 상태 집계, 경계 경로, 바이너리 형식, 실제 Git 상태 전환과 워커 실패 처리를 검사합니다.
+
+`assets/explorer-overlays/icons.xaml`의 원본에서 `powershell.exe -NoProfile -STA -File scripts/New-ExplorerIcons.ps1 -Overlays -Preview`로 배지 ICO와 미리 보기를 만듭니다. 네이티브 DLL에는 세 아이콘을 리소스로 내장합니다. DLL은 `/MT`로 빌드하며 별도 VC 런타임 설치가 필요하지 않습니다.
+
+`package.ps1`은 일반 앱 안에 별도의 관리자 설치 도구 `shell/MoaVcsShellSetup.exe`를 포함합니다. 단순 `publish.ps1` 결과에는 이 설치 도구가 없으므로 상태 배지 활성화에는 완성된 패키지를 사용하세요. CI의 `test-overlay-installer.ps1`은 격리된 관리자 Windows runner에서만 셸 확장 등록·COM 호출·일반/우선 표시 전환·제거를 검사합니다.
+
+상태 캐시 형식은 Core의 `ExplorerOverlaySnapshot`과 C++의 `OverlayCache`에서 공유합니다. 16 MiB / 100,000개 항목으로 제한하고 UTF-16LE 절대 경로와 UTC FILETIME을 저장합니다. 셸 프로세스에는 CLR을 로드하거나 VCS 명령을 실행하지 않습니다.
+
 ## CLI 인자
 
 - --path <폴더 또는 파일>: 열 경로
 - --vcs Git|Svn|Perforce|Lore: 감지된 유형 대신 명시적인 유형 선택
 - --action open|status|diff|blame|log|commit|update|push|clone|init|settings: 탐색기 메뉴 작업. update/push는 저장소를 연 뒤 확인창을 표시하며, clone/init/settings는 해당 대화상자를 바로 엽니다.
 - --install-context-menu 및 --uninstall-context-menu: 현재 사용자 셸 메뉴 등록 관리
+- --overlay-worker: 사용자별 백그라운드 상태 조회. 시작 항목 소유권과 활성화 설정이 있어야 실행됩니다.
+- --pause-overlays / --resume-overlays / --disable-overlays: 설치 프로그램의 작업자 종료·재시작·제거. `--headless`와 함께 사용합니다.
 - --headless: 위 메뉴 등록·제거 명령을 설치 프로그램에서 창 없이 실행하고 종료. 실패 시 종료 코드 1과 %LOCALAPPDATA%\MoaVcs\setup-error.log를 남깁니다.
 
 작업 단계마다 관련 검증 후 한글 메시지로 커밋하고 현재 원격 브랜치에 푸시합니다. `master`와 `codex/**` 브랜치의 푸시 및 pull request는 Windows CI 검증을 실행합니다. 설치 파일 배포는 [릴리스 안내](releases.md)를 따릅니다.
