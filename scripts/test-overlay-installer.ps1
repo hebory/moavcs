@@ -183,9 +183,9 @@ function Assert-ComOverlayBehavior {
                 -not (Test-Path -LiteralPath $query.IconPath -PathType Leaf)) {
                 throw "COM metadata validation failed for overlay $($handler.Id): icon='$($query.IconPath)', index=$($query.IconIndex), priority=$($query.Priority)."
             }
-            $expectedMembership = if ($path -in @($FixturePaths[0], $FixturePaths[1]) -and $handler.State -eq 1 -or
-                $path -in @($FixturePaths[2], $FixturePaths[3]) -and $handler.State -eq 2 -or
-                $path -in @($FixturePaths[4], $FixturePaths[5]) -and $handler.State -eq 3) { 0 } else { 1 }
+            $expectedMembership = if (($path -in @($FixturePaths[0], $FixturePaths[1]) -and $handler.State -eq 1) -or
+                ($path -in @($FixturePaths[2], $FixturePaths[3]) -and $handler.State -eq 2) -or
+                ($path -in @($FixturePaths[4], $FixturePaths[5]) -and $handler.State -eq 3)) { 0 } else { 1 }
             if ($query.Membership -ne $expectedMembership) {
                 throw "COM IsMemberOf returned $($query.Membership) for state $($handler.State) and path '$path'; expected $expectedMembership."
             }

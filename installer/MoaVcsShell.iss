@@ -38,7 +38,7 @@ ChangesAssociations=yes
 SetupLogging=yes
 
 [Files]
-Source: "..\artifacts\shell\win-x64\MoaVcsShell.dll"; DestDir: "{#ShellDirectory}\{#AppVersion}"; Flags: ignoreversion uninsrestartdelete
+Source: "..\artifacts\shell\win-x64\MoaVcsShell.dll"; DestDir: "{#ShellDirectory}\{#AppVersion}"; Flags: ignoreversion restartreplace uninsrestartdelete
 
 [Registry]
 Root: HKLM; Subkey: "Software\Classes\CLSID\{#StringChange(ConflictId, "{", "{{")}"; ValueType: string; ValueName: ""; ValueData: "MoaVCS Conflict Overlay"
