@@ -39,6 +39,10 @@ public static class ShellTests
         Check(plan.Where(p => p.Value.Contains("--shell-path", StringComparison.Ordinal)).All(p => p.Value.Contains("\"%1|\"", StringComparison.Ordinal) || p.Value.Contains("\"%V|\"", StringComparison.Ordinal)), "shell substitutions include a safe trailing sentinel");
         Check(plan.Count(p => p.ValueName is null && p.KeyPath.EndsWith(@"\command", StringComparison.Ordinal) && p.Value.Contains("--action remote", StringComparison.Ordinal)) == 3,
             "Remote address action is available in every context without VCS filtering");
+        Check(plan.Where(p => p.ValueName == "Icon").All(p =>
+                  p.Value.Trim('"').EndsWith(".ico", StringComparison.OrdinalIgnoreCase) &&
+                  !p.Value.EndsWith(",0", StringComparison.Ordinal)),
+            "Explorer icons reference standalone ICO files");
         var noPromotions = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = false };
         CheckMenuLayout(ExplorerIntegration.BuildRegistrationPlan(executable, noPromotions), executable, noPromotions);
         var onlyUpdate = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = true };
@@ -86,7 +90,9 @@ public static class ShellTests
                                      !p.KeyPath[shell.Length..].Contains('\\')).ToArray();
             Check(top.Select(p => p.KeyPath[shell.Length..]).SequenceEqual(expected), "workflow ordering for " + scope);
             Check(plan.Any(p => p.KeyPath == menu && p.ValueName == "MUIVerb" && p.Value == "MoaVCS"), "branded cascade label");
-            Check(plan.Any(p => p.KeyPath == menu && p.ValueName == "Icon" && p.Value.EndsWith("moavcs.exe\",0", StringComparison.Ordinal)), "cascade icon uses application resource");
+            Check(plan.Any(p => p.KeyPath == menu && p.ValueName == "Icon" &&
+                                p.Value == ExplorerIntegration.QuoteArgument(ExplorerIconPath(executable, "moavcs"))),
+                "cascade icon uses its installed MoaVCS ICO file");
             Check(plan.Any(p => p.KeyPath == root && p.ValueName == "MoaVcsExecutable" && p.Value == @"C:\Program Files\Moa Vcs\moavcs.exe"), "uninstall target persists independently of menu ordering");
             var selectionModelIsSingle = scope != @"Directory\Background";
             CheckSelectionModel(plan, menu, selectionModelIsSingle, "cascade " + scope);
@@ -106,6 +112,30 @@ public static class ShellTests
             foreach (var verb in plan.Where(p => p.ValueName == "MUIVerb" && p.KeyPath.StartsWith(shell, StringComparison.Ordinal) &&
                                                   !p.KeyPath[shell.Length..].Contains('\\')))
                 CheckSelectionModel(plan, verb.KeyPath, selectionModelIsSingle, "submenu verb " + scope);
+
+            var iconActions = isFile
+                ? new Dictionary<string, string>
+                {
+                    ["10Commit"] = "commit", ["20Diff"] = "diff", ["30Log"] = "log", ["40Blame"] = "blame",
+                    ["50Status"] = "status", ["60Open"] = "open", ["85Remote"] = "remote", ["90Settings"] = "settings"
+                }
+                : new Dictionary<string, string>
+                {
+                    ["10Update"] = "update", ["20Push"] = "push", ["30Commit"] = "commit", ["40Log"] = "log",
+                    ["50Status"] = "status", ["60Open"] = "open", ["70Clone"] = "clone", ["80Init"] = "init",
+                    ["85Remote"] = "remote", ["90Settings"] = "settings"
+                };
+            foreach (var (id, action) in iconActions)
+            {
+                var promoted = action == "commit" && settings.ShowCommitAtTopLevel ||
+                    action == "update" && settings.ShowUpdateAtTopLevel;
+                var actionKey = promoted
+                    ? classes + scope + @"\shell\MoaVcs." + (action == "commit" ? "Commit" : "Update")
+                    : shell + id;
+                var expectedIcon = ExplorerIntegration.QuoteArgument(ExplorerIconPath(executable, action));
+                Check(plan.Any(p => p.KeyPath == actionKey && p.ValueName == "Icon" && p.Value == expectedIcon),
+                    action + " action has its own installed ICO file in " + scope);
+            }
 
             if (settings.ShowCommitAtTopLevel)
                 CheckQuickVerb(plan, classes + scope + @"\shell\MoaVcs.Commit", executable, "commit", scope == @"Directory\Background" ? "%V" : "%1", selectionModelIsSingle);
@@ -131,7 +161,9 @@ public static class ShellTests
     {
         Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MoaVcsOwner" && !string.IsNullOrWhiteSpace(p.Value)), action + " quick verb has ownership marker");
         Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MoaVcsExecutable" && p.Value == Path.GetFullPath(executable)), action + " quick verb stores executable");
-        Check(plan.Any(p => p.KeyPath == key && p.ValueName == "Icon" && p.Value == ExplorerIntegration.QuoteArgument(Path.GetFullPath(executable)) + ",0"), action + " quick verb has app icon");
+        Check(plan.Any(p => p.KeyPath == key && p.ValueName == "Icon" &&
+                            p.Value == ExplorerIntegration.QuoteArgument(ExplorerIconPath(executable, action))),
+            action + " quick verb has its action ICO file");
         CheckSelectionModel(plan, key, selectionModelIsSingle, action + " quick verb");
         Check(plan.Any(p => p.KeyPath == key && p.ValueName == "MUIVerb" && !string.IsNullOrWhiteSpace(p.Value)), action + " quick verb has label");
         Check(plan.Any(p => p.KeyPath == key + @"\command" && p.ValueName is null && p.Value.Contains("--action " + action, StringComparison.Ordinal) && p.Value.Contains(target, StringComparison.Ordinal)), action + " quick command gets the correct shell target");
@@ -145,6 +177,9 @@ public static class ShellTests
                 : values.Length == 0,
             shouldBeSingle ? description + " requires Single selection" : description + " must omit MultiSelectModel for background menus");
     }
+
+    private static string ExplorerIconPath(string executable, string name) =>
+        Path.Combine(Path.GetDirectoryName(Path.GetFullPath(executable))!, "icons", "explorer", name + ".ico");
 
     private static void CheckSettingsStore()
     {

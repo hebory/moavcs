@@ -122,13 +122,66 @@ function Assert-RegistryValueAbsent {
     }
 }
 
+function Get-ExplorerIconPath {
+    param([string]$ApplicationPath, [string]$Name)
+    Join-Path ([IO.Path]::GetDirectoryName($ApplicationPath)) ("icons\explorer\$Name.ico")
+}
+
+function Assert-ExplorerIcon {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Missing Explorer icon asset: $Path."
+    }
+
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -lt 22 -or
+        [BitConverter]::ToUInt16($bytes, 0) -ne 0 -or
+        [BitConverter]::ToUInt16($bytes, 2) -ne 1) {
+        throw "Invalid ICO header: $Path."
+    }
+
+    $count = [BitConverter]::ToUInt16($bytes, 4)
+    if ($count -lt 2 -or $bytes.Length -lt (6 + 16 * $count)) {
+        throw "Explorer ICO must contain at least two complete image entries: $Path."
+    }
+
+    $sizes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    for ($index = 0; $index -lt $count; $index++) {
+        $entry = 6 + 16 * $index
+        $imageBytes = [BitConverter]::ToUInt32($bytes, $entry + 8)
+        $imageOffset = [BitConverter]::ToUInt32($bytes, $entry + 12)
+        if ($imageBytes -eq 0 -or $imageOffset -lt (6 + 16 * $count) -or
+            [long]$imageOffset + $imageBytes -gt $bytes.Length) {
+            throw "ICO image entry $index is outside the file: $Path."
+        }
+
+        $width = [int]$bytes[$entry]
+        $height = [int]$bytes[$entry + 1]
+        if ($width -eq 0) { $width = 256 }
+        if ($height -eq 0) { $height = 256 }
+        [void]$sizes.Add("${width}x${height}")
+    }
+    if ($sizes.Count -lt 2) {
+        throw "Explorer ICO must include at least two distinct image sizes: $Path."
+    }
+}
+
+function Assert-ExplorerIconAssets {
+    param([string]$ApplicationPath)
+    foreach ($name in @("moavcs", "update", "push", "commit", "log", "status", "open", "clone", "init", "remote", "settings", "diff", "blame")) {
+        Assert-ExplorerIcon (Get-ExplorerIconPath $ApplicationPath $name)
+    }
+}
+
 function Assert-Registration {
     param([string]$ApplicationPath)
     $quotedApplicationPath = [char]34 + $ApplicationPath + [char]34
+    Assert-ExplorerIconAssets $ApplicationPath
     foreach ($menu in $menus) {
         Assert-RegistryValue $menu.Menu "MUIVerb" "MoaVCS" ([Microsoft.Win32.RegistryValueKind]::String)
         Assert-RegistryValue $menu.Menu "MoaVcsOwner" "MoaVcs.ExplorerMenu.v1" ([Microsoft.Win32.RegistryValueKind]::String)
-        Assert-RegistryValue $menu.Menu "Icon" ($quotedApplicationPath + ",0") ([Microsoft.Win32.RegistryValueKind]::String)
+        $quotedRootIconPath = [char]34 + (Get-ExplorerIconPath $ApplicationPath "moavcs") + [char]34
+        Assert-RegistryValue $menu.Menu "Icon" $quotedRootIconPath ([Microsoft.Win32.RegistryValueKind]::String)
         if ($menu.Name -eq "background") {
             Assert-RegistryValueAbsent $menu.Menu "MultiSelectModel"
         } else {
@@ -161,6 +214,8 @@ function Assert-Registration {
                 if ($verb.ContainsKey("Label") -and $labelKey.GetValue("MUIVerb") -cne $verb.Label) {
                     throw "Unexpected label for $($menu.Name) verb $($verb.Id)."
                 }
+                $quotedIconPath = [char]34 + (Get-ExplorerIconPath $ApplicationPath $verb.Action) + [char]34
+                Assert-RegistryValue $verbPath "Icon" $quotedIconPath ([Microsoft.Win32.RegistryValueKind]::String)
                 if ($menu.Name -eq "background") {
                     if ($labelKey.GetValueNames() -contains "MultiSelectModel") {
                         throw "Background verb $($verb.Id) must omit MultiSelectModel."
@@ -191,7 +246,8 @@ function Assert-Registration {
         Assert-RegistryValue $quick.Root "MUIVerb" $quick.Label ([Microsoft.Win32.RegistryValueKind]::String)
         Assert-RegistryValue $quick.Root "MoaVcsOwner" "MoaVcs.ExplorerMenu.v1" ([Microsoft.Win32.RegistryValueKind]::String)
         Assert-RegistryValue $quick.Root "MoaVcsExecutable" $ApplicationPath ([Microsoft.Win32.RegistryValueKind]::String)
-        Assert-RegistryValue $quick.Root "Icon" ($quotedApplicationPath + ",0") ([Microsoft.Win32.RegistryValueKind]::String)
+        $quotedIconPath = [char]34 + (Get-ExplorerIconPath $ApplicationPath $quick.Action) + [char]34
+        Assert-RegistryValue $quick.Root "Icon" $quotedIconPath ([Microsoft.Win32.RegistryValueKind]::String)
         if ($quick.Root.StartsWith("Software\Classes\Directory\Background\", [StringComparison]::OrdinalIgnoreCase)) {
             Assert-RegistryValueAbsent $quick.Root "MultiSelectModel"
         } else {
@@ -259,6 +315,9 @@ function Assert-QuickActionsDemoted {
         foreach ($verb in $demoted) {
             $expectedCommand = "$quotedApplicationPath --shell-path `"$($menu.Target)|`" --action $($verb.Action)"
             Assert-RegistryValue "$($menu.Commands)\Shell\$($verb.Id)\command" "" $expectedCommand `
+                ([Microsoft.Win32.RegistryValueKind]::String)
+            $quotedIconPath = [char]34 + (Get-ExplorerIconPath $ApplicationPath $verb.Action) + [char]34
+            Assert-RegistryValue "$($menu.Commands)\Shell\$($verb.Id)" "Icon" $quotedIconPath `
                 ([Microsoft.Win32.RegistryValueKind]::String)
         }
         if ($menu.Name -eq "background") {

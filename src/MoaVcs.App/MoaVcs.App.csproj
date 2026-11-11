@@ -10,5 +10,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MoaVcs.Core\MoaVcs.Core.csproj" />
+    <Content Include="..\..\assets\explorer-icons\*.ico"
+             Link="icons\explorer\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

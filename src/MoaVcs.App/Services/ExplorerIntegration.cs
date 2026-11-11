@@ -59,7 +59,7 @@ public static class ExplorerIntegration
             values.Add(new(menuPath, "MUIVerb", MenuLabel));
             values.Add(new(menuPath, "MoaVcsOwner", Owner));
             values.Add(new(menuPath, "ExtendedSubCommandsKey", CommandKeyName(scope)));
-            values.Add(new(menuPath, "Icon", QuoteArgument(exe) + ",0"));
+            values.Add(new(menuPath, "Icon", IconPath("moavcs")));
             if (scope != "Directory\\Background")
                 values.Add(new(menuPath, "MultiSelectModel", "Single"));
         }
@@ -74,6 +74,7 @@ public static class ExplorerIntegration
                     entry.Action == "update" && settings.ShowUpdateAtTopLevel;
                 var verb = promoted ? QuickMenuPath(scope, entry.Action) : CommandRoot(scope) + "\\Shell\\" + entry.Id;
                 values.Add(new(verb, "MUIVerb", promoted ? "MoaVCS " + entry.Label : entry.Label));
+                values.Add(new(verb, "Icon", IconPath(entry.Action)));
                 // A background menu has no selected item; Single would hide these verbs.
                 if (scope != "Directory\\Background")
                     values.Add(new(verb, "MultiSelectModel", "Single"));
@@ -81,7 +82,6 @@ public static class ExplorerIntegration
                 {
                     values.Add(new(verb, "MoaVcsOwner", Owner));
                     values.Add(new(verb, "MoaVcsExecutable", exe));
-                    values.Add(new(verb, "Icon", QuoteArgument(exe) + ",0"));
                 }
                 else
                 {
@@ -94,6 +94,9 @@ public static class ExplorerIntegration
             }
         }
         return values;
+
+        string IconPath(string action) => QuoteArgument(Path.Combine(Path.GetDirectoryName(exe)!,
+            "icons", "explorer", action + ".ico"));
 
         void AddCommand(string verb, string action, string scope)
         {
