@@ -38,7 +38,11 @@ $expectedDll = [IO.Path]::GetFullPath((Join-Path $expectedDllPrefix "$version\Mo
 $settingsPath = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'MoaVcs/settings.json'
 $overlayDirectory = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'MoaVcs/overlays'
 $cachePath = Join-Path $overlayDirectory 'status.bin'
-$testRoot = Join-Path $env:RUNNER_TEMP ('moavcs-overlay-' + [Guid]::NewGuid().ToString('N'))
+$allowedTempRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+$testRoot = [IO.Path]::GetFullPath((Join-Path $allowedTempRoot ('moavcs-overlay-' + [Guid]::NewGuid().ToString('N'))))
+if (-not $testRoot.StartsWith($allowedTempRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Refusing to create or remove an overlay fixture outside RUNNER_TEMP.'
+}
 $installerStarted = $false
 $cacheCreated = $false
 $overlayDirectoryCreated = $false
