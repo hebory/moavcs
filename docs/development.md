@@ -19,6 +19,8 @@ tests\MoaVcs.Tests는 실제 Git 임시 저장소 통합 테스트, 프로세스
 
 검증은 사용자 저장소를 변경하거나 탐색기 메뉴를 등록하지 않습니다. 임시 저장소는 .local 안에서 생성하고 정리합니다. WPF 렌더링 검사는 실제 탐색기에서 클릭하는 수동 검증을 대신하지 않습니다.
 
+탐색기 아이콘의 벡터 원본은 `assets/explorer-icons/icons.xaml`이며 브랜드 로고는 `assets/branding/icon.xaml`을 재사용합니다. Windows에서 `powershell.exe -NoProfile -STA -File scripts/New-ExplorerIcons.ps1 -Preview`로 ICO를 다시 만들 수 있습니다. 밝은 배경·어두운 배경의 16·24·32 픽셀 미리 보기는 `artifacts/screenshots/explorer-icons.png`에 생성됩니다. 생성된 ICO를 원본과 함께 커밋하며, 일반 빌드에서는 생성 도구를 실행하지 않고 ICO를 복사합니다.
+
 Lore의 실제 CLI 통합·WPF 검사는 아래처럼 실행합니다. 준비 스크립트는 공식 Windows x64 Lore 0.13.0 ZIP을 `.local/test-tools`에 내려받고 고정된 SHA-256을 검증합니다. 시스템 설치나 PATH 변경 없이 테스트에서만 사용합니다. CI와 릴리스에서도 같은 절차를 실행합니다.
 
 ```powershell
