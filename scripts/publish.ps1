@@ -61,4 +61,9 @@ try {
     Pop-Location
 }
 
+if ($Runtime -eq 'win-x64') {
+    & (Join-Path $PSScriptRoot 'build-shell.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Native Explorer overlay build failed.' }
+}
+
 Write-Host "Published $Runtime ($Version) to $output"

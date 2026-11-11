@@ -1,0 +1,4 @@
+LIBRARY "MoaVcsShell"
+EXPORTS
+    DllGetClassObject
+    DllCanUnloadNow

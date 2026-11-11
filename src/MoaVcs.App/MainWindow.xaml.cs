@@ -578,9 +578,10 @@ public partial class MainWindow : Window
         _settings.RecentRepositories.RemoveAll(r => r.Path.Equals(repository.RootPath, StringComparison.OrdinalIgnoreCase));
         _settings.RecentRepositories.Insert(0, new RecentRepository(repository.RootPath, repository.Kind));
         _settings.RecentRepositories = _settings.RecentRepositories.Take(12).ToList();
-        try { _settingsStore.Save(_settings); }
+        try { _settingsStore.SaveRecentRepositories(_settings.RecentRepositories); }
         catch (Exception ex) { ShowNotice("최근 저장소를 저장하지 못했습니다: " + ex.Message); }
         UpdateRecentList();
+        ExplorerOverlays.Wake();
     }
 
     private void UpdateRecentList()

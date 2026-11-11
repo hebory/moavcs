@@ -64,9 +64,6 @@ if (-not (Test-Path -LiteralPath (Join-Path $publishOutput "moavcs.exe"))) {
     throw "The self-contained publish output is missing moavcs.exe: $publishOutput"
 }
 
-Compress-Archive -Path (Join-Path $publishOutput "*") -DestinationPath $portablePath -CompressionLevel Optimal
-if (-not (Test-Path -LiteralPath $portablePath)) { throw "The portable archive was not created." }
-
 $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
 if ($null -eq $compiler) {
     $programFilesX86 = [Environment]::GetFolderPath("ProgramFilesX86")
@@ -86,12 +83,16 @@ if ($null -eq $compiler) {
 
 Push-Location $workspace
 try {
+    & $compilerPath "/DAppVersion=$Version" "/Qp" (Join-Path $workspace 'installer/MoaVcsShell.iss')
+    if ($LASTEXITCODE -ne 0) { throw "Shell installer compilation failed with exit code $LASTEXITCODE." }
     & $compilerPath "/DAppVersion=$Version" "/Qp" $installerScript
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed with exit code $LASTEXITCODE." }
 } finally {
     Pop-Location
 }
 if (-not (Test-Path -LiteralPath $setupPath)) { throw "The installer was not created: $setupPath" }
+Compress-Archive -Path (Join-Path $publishOutput "*") -DestinationPath $portablePath -CompressionLevel Optimal
+if (-not (Test-Path -LiteralPath $portablePath)) { throw "The portable archive was not created." }
 
 $checksumLines = foreach ($assetPath in @($setupPath, $portablePath)) {
     $hash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -4,6 +4,8 @@ $workspace = Split-Path -Parent $PSScriptRoot
 $env:MSBuildEnableWorkloadResolver = 'false'
 Push-Location $workspace
 try {
+    & (Join-Path $PSScriptRoot 'build-shell.ps1') -Test
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     dotnet build MoaVcs.sln --configuration $Configuration -m:1 -p:UseSharedCompilation=false -p:RestoreIgnoreFailedSources=true --nologo
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     dotnet run --project tests/MoaVcs.Tests --configuration $Configuration --no-build

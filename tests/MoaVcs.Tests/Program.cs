@@ -11,7 +11,14 @@ internal static class Program
             if (args.SequenceEqual(["--remote"])) { await RemoteTests.RunAsync(); Console.WriteLine("PASS: Git origin addresses, preservation and validation"); return 0; }
             if (args.SequenceEqual(["--push"])) { await PushTests.RunAsync(); Console.WriteLine("PASS: Git first push, upstream tracking and push configuration preservation"); return 0; }
             if (args.SequenceEqual(["--conflicts"])) { await RunConflictChecks(); return 0; }
-            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push, --conflicts or no arguments.");
+            if (args.SequenceEqual(["--overlay"]))
+            {
+                await ExplorerOverlayTests.RunAsync();
+                await ExplorerOverlayWorkerTests.RunAsync();
+                Console.WriteLine("PASS: Explorer overlay status snapshot, worker scan, cache and settings");
+                return 0;
+            }
+            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push, --conflicts, --overlay or no arguments.");
             TextDiffTests.Run();
             Console.WriteLine("PASS: line comparison alignment, bounded fallback, Unicode, cancellation and newline labels");
             await ProcessTests.RunAsync();
@@ -28,6 +35,9 @@ internal static class Program
             await RunLoreChecks();
             await ShellTests.RunAsync();
             Console.WriteLine("PASS: Explorer command quoting and settings persistence");
+            await ExplorerOverlayTests.RunAsync();
+            await ExplorerOverlayWorkerTests.RunAsync();
+            Console.WriteLine("PASS: Explorer overlay status snapshot, worker scan, cache and settings");
             await ExternalToolTests.RunAsync();
             Console.WriteLine("PASS: external tool process arguments, snapshots, cleanup and settings persistence");
             return 0;

@@ -1,0 +1,5 @@
+LIBRARY "MoaVcsShellTest"
+EXPORTS
+    DllGetClassObject
+    DllCanUnloadNow
+    MoaVcsSetTestCachePath

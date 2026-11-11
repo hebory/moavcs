@@ -125,10 +125,34 @@ internal static class Program
             Render(fileToolsSettings, Path.Combine(output, "settings-file-tools-shortcut.png"));
             SelectSettingsTab(settingsWindow, settingsTabs, 2);
             Render(settingsWindow, Path.Combine(output, "settings-explorer.png"));
+            if (!settingsTabs.Items.Cast<TabItem>().Any(tab => Equals(tab.Header, "탐색기")))
+                throw new InvalidOperationException("Explorer menu and status settings must share the Explorer tab.");
             var menuOptions = Descendants((DependencyObject)settingsWindow.Content).OfType<CheckBox>()
                 .Where(c => c.Name is "ExplorerCommitTopLevel" or "ExplorerUpdateTopLevel").ToList();
             if (menuOptions.Count != 2 || menuOptions.Any(c => c.IsChecked != true))
                 throw new InvalidOperationException("Explorer shortcuts must default to the first menu level.");
+            var explorerControls = Descendants((DependencyObject)settingsWindow.Content).ToList();
+            if (explorerControls.FindIndex(control => control is Button { Name: "RegisterExplorerMenuButton" }) >
+                explorerControls.FindIndex(control => control is TextBlock { Text: "파일·폴더 상태 배지" }))
+                throw new InvalidOperationException("Context-menu registration controls must appear before the separate status-overlay section.");
+            var overlayToggle = Descendants((DependencyObject)settingsWindow.Content).OfType<Button>().Single(button => button.Name == "ExplorerOverlayToggleButton");
+            var overlayStatus = Descendants((DependencyObject)settingsWindow.Content).OfType<TextBlock>().Single(block => block.Name == "ExplorerOverlayStatus");
+            var overlayHelp = Descendants((DependencyObject)settingsWindow.Content).OfType<Expander>().Single(expander => Equals(expander.Header, "설치 및 표시 안내"));
+            if (overlayToggle.Content?.ToString() != "상태 배지 켜기" || string.IsNullOrWhiteSpace(overlayStatus.Text))
+                throw new InvalidOperationException("Explorer status overlays must default to off and explain their current state.");
+            if (overlayHelp.Content is not TextBlock helpText || !helpText.Text.Contains("15개 슬롯", StringComparison.Ordinal) ||
+                !helpText.Text.Contains("관리자 권한", StringComparison.Ordinal))
+                throw new InvalidOperationException("Explorer overlay help must explain elevation and the Windows overlay limit.");
+            var overlayScope = Descendants((DependencyObject)settingsWindow.Content).OfType<TextBlock>().Single(block => block.Name == "ExplorerOverlayScope");
+            if (!overlayScope.Text.Contains("로컬 고정 드라이브", StringComparison.Ordinal) ||
+                !overlayScope.Text.Contains("최대 12개", StringComparison.Ordinal) ||
+                !overlayScope.Text.Contains("충돌, 수정됨, 추적 안 됨 순", StringComparison.Ordinal))
+                throw new InvalidOperationException("Explorer overlay scope must explain that network and removable repositories are excluded.");
+            var overlayScratch = Path.Combine(scratch, "overlay-settings-smoke-" + Guid.NewGuid().ToString("N") + ".json");
+            var overlaySettings = new AppSettings();
+            _ = new SettingsWindow(overlaySettings, new SettingsStore(overlayScratch), new MoaVcs.Core.ProcessCommandRunner());
+            if (overlaySettings.ExplorerOverlaysEnabled || File.Exists(overlayScratch))
+                throw new InvalidOperationException("Opening settings must not enable or persist Explorer overlays.");
             var submenuSettingsWindow = new SettingsWindow(new AppSettings
             {
                 ExplorerMenu = new ExplorerMenuSettings { ShowCommitAtTopLevel = false, ShowUpdateAtTopLevel = false }

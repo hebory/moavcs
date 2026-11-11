@@ -170,6 +170,9 @@ public sealed class SettingsWindow : Window
     private readonly Action<Uri> _openDownload;
     private readonly CheckBox _commitTopLevel;
     private readonly CheckBox _updateTopLevel;
+    private readonly TextBlock _overlayStatus = new() { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 8, 0, 0) };
+    private readonly Button _overlayToggle;
+    private readonly CheckBox _overlayPriority;
     public SettingsWindow(AppSettings settings, SettingsStore store, ICommandRunner runner, Action<Uri>? openDownload = null, bool fileTools = false)
     {
         _settings = settings; _store = store; _runner = runner;
@@ -352,10 +355,67 @@ public sealed class SettingsWindow : Window
             Margin = new Thickness(0, 0, 0, 14), LineHeight = 19
         });
         var shellButtons = new StackPanel { Orientation = Orientation.Horizontal };
-        shellButtons.Children.Add(DialogLayout.Button("메뉴 등록 / 갱신", (_, _) => SetExplorerMenu(true)));
-        var remove = DialogLayout.Button("메뉴 제거", (_, _) => SetExplorerMenu(false)); remove.Margin = new Thickness(10, 8, 0, 0); shellButtons.Children.Add(remove);
+        var registerMenu = DialogLayout.Button("메뉴 등록 / 갱신", (_, _) => SetExplorerMenu(true));
+        registerMenu.Name = "RegisterExplorerMenuButton";
+        shellButtons.Children.Add(registerMenu);
+        var remove = DialogLayout.Button("메뉴 제거", (_, _) => SetExplorerMenu(false));
+        remove.Name = "RemoveExplorerMenuButton";
+        remove.Margin = new Thickness(10, 8, 0, 0); shellButtons.Children.Add(remove);
         explorerPanel.Children.Add(shellButtons);
-        tabs.Items.Add(CreateTab("탐색기 메뉴", "우클릭 동작과 표시 위치", explorerPanel));
+
+        explorerPanel.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(Color.FromRgb(227, 231, 237)), Margin = new Thickness(0, 5, 0, 14) });
+        var overlayPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 14) };
+        overlayPanel.Children.Add(new TextBlock { Text = "파일·폴더 상태 배지", FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 7) });
+        overlayPanel.Children.Add(new TextBlock
+        {
+            Name = "ExplorerOverlayScope",
+            Text = "로컬 고정 드라이브에 있는 최근 저장소(최대 12개)의 상태를 백그라운드에서 확인해 표시합니다. 폴더는 하위 파일의 상태를 모아 표시하며 충돌, 수정됨, 추적 안 됨 순으로 배지를 선택합니다.",
+            Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, LineHeight = 19, Margin = new Thickness(0, 0, 0, 8)
+        });
+        var badgeList = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+        AddBadge("●", Color.FromRgb(205, 58, 64), "충돌", "해결이 필요한 충돌 파일");
+        AddBadge("●", Color.FromRgb(222, 126, 38), "수정됨", "추가·수정·삭제된 파일");
+        AddBadge("●", Color.FromRgb(47, 117, 191), "추적 안 됨", "저장소에 아직 추가되지 않은 파일");
+        overlayPanel.Children.Add(badgeList);
+        _overlayPriority = new CheckBox
+        {
+            Name = "ExplorerOverlayPriority",
+            Content = "MoaVCS 배지를 먼저 표시 (다른 앱 배지가 숨겨질 수 있음)",
+            IsChecked = settings.ExplorerOverlaysPreferPriority,
+            IsEnabled = !settings.ExplorerOverlaysEnabled,
+            Margin = new Thickness(0, 6, 0, 5),
+            ToolTip = "표시 순서를 바꾸려면 상태 배지를 끈 뒤 이 항목을 선택하고 다시 켜세요. 이 순서는 이 PC의 모든 사용자에게 적용됩니다."
+        };
+        overlayPanel.Children.Add(_overlayPriority);
+        _overlayToggle = DialogLayout.Button(settings.ExplorerOverlaysEnabled ? "상태 배지 끄기" : "상태 배지 켜기", OverlayToggle_Click);
+        _overlayToggle.Name = "ExplorerOverlayToggleButton";
+        _overlayToggle.HorizontalAlignment = HorizontalAlignment.Left;
+        overlayPanel.Children.Add(_overlayToggle);
+        _overlayStatus.Name = "ExplorerOverlayStatus";
+        _overlayStatus.Text = ExplorerOverlays.GetStatusText(settings.ExplorerOverlaysEnabled);
+        overlayPanel.Children.Add(_overlayStatus);
+        var overlayHelp = new Expander { Header = "설치 및 표시 안내", IsExpanded = false, Margin = new Thickness(0, 7, 0, 0) };
+        overlayHelp.Content = new TextBlock
+        {
+            Text = "처음 켤 때 Windows 셸 확장을 설치하므로 관리자 권한 승인이 필요합니다. Windows가 아이콘 상태 배지 전체에 15개 슬롯만 제공하므로 다른 프로그램이 많이 등록된 경우 일부 배지가 표시되지 않을 수 있습니다. 설치 후 탐색기를 다시 시작하거나 로그아웃 후 로그인해야 할 수 있습니다. 정상·무시 파일은 표시하지 않습니다.",
+            Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, LineHeight = 19, Margin = new Thickness(0, 8, 0, 4)
+        };
+        overlayPanel.Children.Add(overlayHelp);
+        explorerPanel.Children.Add(new Border
+        {
+            Background = Brushes.White, BorderBrush = new SolidColorBrush(Color.FromRgb(227, 231, 237)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7), Padding = new Thickness(14), Child = overlayPanel
+        });
+
+        void AddBadge(string symbol, Color color, string label, string detail)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            row.Children.Add(new TextBlock { Text = symbol, Foreground = new SolidColorBrush(color), FontSize = 16, Margin = new Thickness(0, 0, 8, 0) });
+            row.Children.Add(new TextBlock { Text = label, FontWeight = FontWeights.SemiBold, Width = 76, VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(new TextBlock { Text = detail, Foreground = Brushes.SlateGray, VerticalAlignment = VerticalAlignment.Center });
+            badgeList.Children.Add(row);
+        }
+        tabs.Items.Add(CreateTab("탐색기", "우클릭 메뉴와 상태 배지", explorerPanel));
         tabs.SelectedIndex = fileTools ? 1 : 0;
 
         var footer = new StackPanel();
@@ -463,6 +523,34 @@ public sealed class SettingsWindow : Window
         }
     }
 
+    private async void OverlayToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _overlayToggle.IsEnabled = false;
+        try
+        {
+            if (_settings.ExplorerOverlaysEnabled)
+            {
+                await ExplorerOverlays.DisableAsync(MainWindow.GetExecutablePath(), _store);
+                _settings.ExplorerOverlaysEnabled = false;
+                _overlayStatus.Text = ExplorerOverlays.GetStatusText(false);
+            }
+            else
+            {
+                await ExplorerOverlays.EnableAsync(MainWindow.GetExecutablePath(), _store, _overlayPriority.IsChecked == true);
+                _settings.ExplorerOverlaysEnabled = true;
+                _settings.ExplorerOverlaysPreferPriority = _overlayPriority.IsChecked == true;
+                _overlayStatus.Text = ExplorerOverlays.GetStatusText(true);
+            }
+            _overlayToggle.Content = _settings.ExplorerOverlaysEnabled ? "상태 배지 끄기" : "상태 배지 켜기";
+            _overlayPriority.IsEnabled = !_settings.ExplorerOverlaysEnabled;
+        }
+        catch (Exception ex)
+        {
+            _overlayStatus.Text = "상태 배지 설정에 실패했습니다: " + ex.Message;
+        }
+        finally { _overlayToggle.IsEnabled = true; }
+    }
+
     private ExplorerMenuSettings ReadExplorerMenuSettings() => new()
     {
         ShowCommitAtTopLevel = _commitTopLevel.IsChecked == true,
@@ -486,12 +574,16 @@ public sealed class SettingsWindow : Window
                 if (external.UseExternal) ExternalToolLauncher.Validate(external, kind);
                 externalTools[kind] = external;
             }
+            var saved = _store.Load();
+            if (_store.LoadWarning is { } warning) throw new IOException(warning);
             var updated = new AppSettings
             {
                 RecentRepositories = _settings.RecentRepositories,
                 ExecutablePaths = _paths.ToDictionary(pair => pair.Key, pair => pair.Value.Text.Trim()),
                 ExternalTools = externalTools,
-                ExplorerMenu = ReadExplorerMenuSettings()
+                ExplorerMenu = ReadExplorerMenuSettings(),
+                ExplorerOverlaysEnabled = saved.ExplorerOverlaysEnabled,
+                ExplorerOverlaysPreferPriority = saved.ExplorerOverlaysPreferPriority
             };
             var previousMenuSettings = _settings.ExplorerMenu ?? new ExplorerMenuSettings();
             var menuSettingsChanged = previousMenuSettings.ShowCommitAtTopLevel != updated.ExplorerMenu.ShowCommitAtTopLevel ||

@@ -1,13 +1,15 @@
 [CmdletBinding()]
-param([switch]$Preview)
+param([switch]$Preview, [switch]$Overlays)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 $projectRoot = Split-Path $PSScriptRoot -Parent
-$assetRoot = Join-Path $projectRoot 'assets\explorer-icons'
+$assetRoot = Join-Path $projectRoot $(if ($Overlays) { 'assets\explorer-overlays' } else { 'assets\explorer-icons' })
 $icons = [Windows.Markup.XamlReader]::Parse([IO.File]::ReadAllText((Join-Path $assetRoot 'icons.xaml')))
-$icons.Add('moavcs', [Windows.Markup.XamlReader]::Parse(
-    [IO.File]::ReadAllText((Join-Path $projectRoot 'assets\branding\icon.xaml'))))
+if (-not $Overlays) {
+    $icons.Add('moavcs', [Windows.Markup.XamlReader]::Parse(
+        [IO.File]::ReadAllText((Join-Path $projectRoot 'assets\branding\icon.xaml'))))
+}
 $sizes = @(16, 20, 24, 32, 40, 48, 64, 256)
 
 function Render-IconPng($control, [int]$pixels) {
@@ -56,7 +58,8 @@ if ($Preview) {
         $column = [Windows.Controls.StackPanel]::new()
         $column.Width = 300
         $column.Background = [Windows.Media.BrushConverter]::new().ConvertFromString($background)
-        foreach ($name in @('moavcs', 'commit', 'update', 'push', 'diff', 'blame', 'log', 'status', 'open', 'clone', 'init', 'remote', 'settings')) {
+        $names = if ($Overlays) { @('conflict', 'modified', 'untracked') } else { @('moavcs', 'commit', 'update', 'push', 'diff', 'blame', 'log', 'status', 'open', 'clone', 'init', 'remote', 'settings') }
+        foreach ($name in $names) {
             $row = [Windows.Controls.StackPanel]::new()
             $row.Orientation = 'Horizontal'; $row.Height = 40
             foreach ($size in @(16, 24, 32)) {
@@ -74,14 +77,15 @@ if ($Preview) {
         }
         [void]$panel.Children.Add($column)
     }
-    $size = [Windows.Size]::new(600, 520)
+    $height = if ($Overlays) { 120 } else { 520 }
+    $size = [Windows.Size]::new(600, $height)
     $panel.Measure($size); $panel.Arrange([Windows.Rect]::new($size)); $panel.UpdateLayout()
-    $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new(600, 520, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
+    $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new(600, $height, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
     $bitmap.Render($panel)
     $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
     $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
     $previewRoot = Join-Path $projectRoot 'artifacts\screenshots'
     [void][IO.Directory]::CreateDirectory($previewRoot)
-    $stream = [IO.File]::Create((Join-Path $previewRoot 'explorer-icons.png'))
+    $stream = [IO.File]::Create((Join-Path $previewRoot $(if ($Overlays) { 'explorer-overlays.png' } else { 'explorer-icons.png' })))
     try { $encoder.Save($stream) } finally { $stream.Dispose() }
 }

@@ -29,6 +29,8 @@ public sealed class AppSettings
     public Dictionary<VcsKind, string> ExecutablePaths { get; set; } = [];
     public Dictionary<ExternalToolKind, ExternalToolSettings> ExternalTools { get; set; } = [];
     public ExplorerMenuSettings ExplorerMenu { get; set; } = new();
+    public bool ExplorerOverlaysEnabled { get; set; }
+    public bool ExplorerOverlaysPreferPriority { get; set; }
 }
 
 /// <summary>Persists per-user preferences without requiring administrator access.</summary>
@@ -115,6 +117,24 @@ public sealed class SettingsStore
             ShowCommitAtTopLevel = explorerMenu.ShowCommitAtTopLevel,
             ShowUpdateAtTopLevel = explorerMenu.ShowUpdateAtTopLevel
         };
+        Save(settings);
+    }
+
+    public void SaveExplorerOverlays(bool enabled, bool? preferPriority = null)
+    {
+        var settings = Load();
+        if (LoadWarning is { } warning)
+            throw new IOException("설정 파일을 읽을 수 없어 상태 배지 설정을 저장하지 않았습니다. " + warning);
+        settings.ExplorerOverlaysEnabled = enabled;
+        if (preferPriority is { } priority) settings.ExplorerOverlaysPreferPriority = priority;
+        Save(settings);
+    }
+
+    public void SaveRecentRepositories(List<RecentRepository> repositories)
+    {
+        var settings = Load();
+        if (LoadWarning is { } warning) throw new IOException(warning);
+        settings.RecentRepositories = repositories;
         Save(settings);
     }
 

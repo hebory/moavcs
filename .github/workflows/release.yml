@@ -50,6 +50,8 @@ jobs:
         run: ./scripts/package.ps1 -Version $env:APP_VERSION
       - name: Smoke test per-user install and uninstall
         run: ./scripts/test-installer.ps1 -InstallerPath "artifacts/release/moavcs-$env:APP_VERSION-win-x64-setup.exe"
+      - name: Smoke test native Explorer overlay installer
+        run: ./scripts/test-overlay-installer.ps1
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -51,3 +51,6 @@ jobs:
           [xml]$project = Get-Content src/MoaVcs.App/MoaVcs.App.csproj -Raw
           $version = $project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
           ./scripts/test-installer.ps1 -InstallerPath "artifacts/release/moavcs-$version-win-x64-setup.exe"
+      - name: Smoke test native Explorer overlay installer
+        shell: pwsh
+        run: ./scripts/test-overlay-installer.ps1

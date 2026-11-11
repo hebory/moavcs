@@ -3,7 +3,7 @@ using MoaVcs.Core;
 namespace MoaVcs.App.Services;
 
 public sealed record LaunchOptions(string? Path, string Action = "open", VcsKind? Vcs = null,
-    bool InstallContextMenu = false, bool UninstallContextMenu = false, bool Headless = false)
+    bool InstallContextMenu = false, bool UninstallContextMenu = false, bool Headless = false, string? OverlayOperation = null)
 {
     private static readonly HashSet<string> AllowedActions = new(StringComparer.OrdinalIgnoreCase)
         { "open", "status", "diff", "blame", "log", "commit", "update", "push", "clone", "init", "remote", "settings" };
@@ -15,9 +15,16 @@ public sealed record LaunchOptions(string? Path, string Action = "open", VcsKind
         string action = "open";
         VcsKind? vcs = null;
         bool install = false, uninstall = false, headless = false;
+        string? overlay = null;
         for (var i = 0; i < args.Length; i++)
         {
             var token = args[i];
+            if (token is "--overlay-worker" or "--pause-overlays" or "--resume-overlays" or "--disable-overlays")
+            {
+                if (overlay is not null) throw new FormatException("상태 배지 작업을 동시에 실행할 수 없습니다.");
+                overlay = token;
+                continue;
+            }
             if (token.Equals("--headless", StringComparison.OrdinalIgnoreCase)) { headless = true; continue; }
             if (token.Equals("--install-context-menu", StringComparison.OrdinalIgnoreCase)) { install = true; continue; }
             if (token.Equals("--uninstall-context-menu", StringComparison.OrdinalIgnoreCase)) { uninstall = true; continue; }
@@ -47,8 +54,10 @@ public sealed record LaunchOptions(string? Path, string Action = "open", VcsKind
             }
         }
         if (install && uninstall) throw new FormatException("탐색기 메뉴 설치와 제거를 동시에 실행할 수 없습니다.");
-        if (headless && (!install && !uninstall || path is not null || action != "open" || vcs is not null))
+        if (overlay is not null && (install || uninstall || path is not null || action != "open" || vcs is not null))
+            throw new FormatException("상태 배지 작업은 다른 작업과 함께 실행할 수 없습니다.");
+        if (headless && (overlay is null && !install && !uninstall || path is not null || action != "open" || vcs is not null))
             throw new FormatException("--headless는 탐색기 메뉴 등록 또는 제거 작업에만 사용할 수 있습니다.");
-        return new LaunchOptions(path, action, vcs, install, uninstall, headless);
+        return new LaunchOptions(path, action, vcs, install, uninstall, headless, overlay);
     }
 }

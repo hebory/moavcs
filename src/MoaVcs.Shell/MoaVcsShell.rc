@@ -1,0 +1,5 @@
+#include <windows.h>
+
+101 ICON "../../assets/explorer-overlays/conflict.ico"
+102 ICON "../../assets/explorer-overlays/modified.ico"
+103 ICON "../../assets/explorer-overlays/untracked.ico"
