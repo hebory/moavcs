@@ -1,8 +1,8 @@
 #ifndef AppVersion
   #error "AppVersion is required"
 #endif
-#define ShellDirectory "{commonpf64}\MoaVCS\Shell"
-#define ShellDll "{commonpf64}\MoaVCS\Shell\" + AppVersion + "\MoaVcsShell.dll"
+#define ShellDirectory "{commoncf64}\MoaVCS\Shell"
+#define ShellDll "{commoncf64}\MoaVCS\Shell\" + AppVersion + "\MoaVcsShell.dll"
 #define OverlayRoot "Software\Microsoft\Windows\CurrentVersion\Explorer\ShellIconOverlayIdentifiers"
 #define ConflictId "{A25E0B81-8C4E-4C9B-9D3A-DF43085C2B11}"
 #define ModifiedId "{B7DA0B46-1295-42B0-B3A7-3D55F6E83F22}"
