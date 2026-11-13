@@ -36,7 +36,8 @@ public static class HistoryGitTests
             (await RunAsync(runner, root, "mv", "--", "old name.txt", "new name.txt")).EnsureSuccess();
             await File.WriteAllTextAsync(Path.Combine(root, "new name.txt"), "base line\nstable one\nstable two\nstable three\nstable four\ncommitted version\n", Utf8NoBom);
             File.Delete(Path.Combine(root, "delete.txt"));
-            await File.WriteAllTextAsync(Path.Combine(root, "added [draft].txt"), "added version\n", Utf8NoBom);
+            const string unicodePath = "추가 [draft] 한글.txt";
+            await File.WriteAllTextAsync(Path.Combine(root, unicodePath), "added version\n", Utf8NoBom);
             await File.WriteAllBytesAsync(Path.Combine(root, "binary.dat"), [0x00, 0x03, 0x02, 0xFF]);
             (await RunAsync(runner, root, "add", "-A", "--")).EnsureSuccess();
             const string commitMessage = "change files\n\nA detailed body with multiple lines.\nSecond paragraph.";
@@ -48,7 +49,7 @@ public static class HistoryGitTests
             Assert(details.Entry.Message == commitMessage, "full multiline commit message is retained");
             Assert(details.Files.Any(file => file.Status == "Renamed" && file.Path == "new name.txt" && file.OriginalPath == "old name.txt"),
                 "rename details include both destination and original path");
-            Assert(details.Files.Any(file => file.Status == "Added" && file.Path == "added [draft].txt"), "addition details parse a literal special-character path");
+            Assert(details.Files.Any(file => file.Status == "Added" && file.Path == unicodePath), "addition details parse a literal Unicode special-character path");
             Assert(details.Files.Any(file => file.Status == "Deleted" && file.Path == "delete.txt"), "deletion details");
             Assert(details.Files.Any(file => file.Status == "Modified" && file.Path == "binary.dat"), "binary modification file listing");
 
@@ -57,8 +58,10 @@ public static class HistoryGitTests
                    renameDiff.Contains("rename to new name.txt", StringComparison.Ordinal) &&
                    renameDiff.Contains("+committed version", StringComparison.Ordinal), "selected rename patch uses old and new paths");
             var literalDiff = await provider.GetHistoryDiffAsync(root, changeEntry.Id,
-                details.Files.Single(file => file.Path == "added [draft].txt"));
+                details.Files.Single(file => file.Path == unicodePath));
             Assert(literalDiff.Contains("+added version", StringComparison.Ordinal) &&
+                   literalDiff.Contains("+++ b/" + unicodePath, StringComparison.Ordinal) &&
+                   !literalDiff.Contains("\\354", StringComparison.Ordinal) &&
                    !literalDiff.Contains("rename from", StringComparison.Ordinal), "literal selected path limits the patch to that file");
             var binaryDiff = await provider.GetHistoryDiffAsync(root, changeEntry.Id, details.Files.Single(file => file.Path == "binary.dat"));
             Assert(binaryDiff.Contains("Binary files", StringComparison.Ordinal), "selected binary patch is reported without text conversion");

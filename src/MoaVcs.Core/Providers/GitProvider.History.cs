@@ -35,7 +35,7 @@ public sealed partial class GitProvider
 
         var args = new List<string>
         {
-            "--literal-pathspecs", "--no-pager", "diff-tree", "--patch", "--no-commit-id",
+            "-c", "core.quotepath=false", "--literal-pathspecs", "--no-pager", "diff-tree", "--patch", "--no-commit-id",
             "-r", "-M", "--no-ext-diff", "--no-textconv", "--no-color"
         };
         if (relationship.IsRoot) args.Add("--root");
