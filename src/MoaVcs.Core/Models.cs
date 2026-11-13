@@ -21,7 +21,12 @@ public sealed record FileChange(string Path, string Status, string IndexStatus =
     public bool IsStaged => !IsConflicted && IndexStatus.Length > 0 && IndexStatus != " " && IndexStatus != "?";
 }
 
-public sealed record HistoryEntry(string Id, string Author, string Date, string Message);
+public sealed record HistoryEntry(string Id, string Author, string Date, string Message)
+{
+    public string Summary => Message.IndexOfAny(['\r', '\n']) is var end && end >= 0 ? Message[..end] : Message;
+}
+
+public sealed record HistoryDetails(HistoryEntry Entry, IReadOnlyList<FileChange> Files, string ComparisonLabel);
 
 public sealed record FileComparison(string Path, string LeftLabel, string RightLabel, string LeftText, string RightText);
 
@@ -79,5 +84,9 @@ public interface IVcsProvider
     Task SetRemoteUrlAsync(string root, string url, RemoteInfo expected, CancellationToken cancellationToken = default) =>
         throw new VcsException($"{Name}에서는 아직 원격 주소 변경을 지원하지 않습니다.");
     Task<IReadOnlyList<HistoryEntry>> GetHistoryAsync(string root, CancellationToken cancellationToken = default);
+    Task<HistoryDetails> GetHistoryDetailsAsync(string root, string revision, CancellationToken cancellationToken = default) =>
+        throw new VcsException($"{Name}에서는 아직 커밋 상세 보기를 지원하지 않습니다.");
+    Task<string> GetHistoryDiffAsync(string root, string revision, FileChange? file = null, CancellationToken cancellationToken = default) =>
+        throw new VcsException($"{Name}에서는 아직 커밋별 변경 내용 보기를 지원하지 않습니다.");
     Task<CommandResult> ExecuteAsync(VcsRequest request, CancellationToken cancellationToken = default);
 }

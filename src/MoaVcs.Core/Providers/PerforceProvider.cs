@@ -1,7 +1,7 @@
 namespace MoaVcs.Core.Providers;
 
 /// <summary>Helix Core adapter. It operates on the P4 client configured for the selected directory.</summary>
-public sealed class PerforceProvider : IVcsProvider
+public sealed partial class PerforceProvider : IVcsProvider
 {
     private readonly ICommandRunner _runner;
     public PerforceProvider(ICommandRunner? runner = null, string executable = "p4")

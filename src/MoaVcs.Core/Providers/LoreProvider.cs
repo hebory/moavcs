@@ -43,10 +43,7 @@ public sealed partial class LoreProvider : IVcsProvider
     }
 
     public async Task<IReadOnlyList<HistoryEntry>> GetHistoryAsync(string root, CancellationToken cancellationToken = default)
-    {
-        var result = await Run(root, ["history", "--oneline", "50"], cancellationToken);
-        return ParseHistoryText(result.StandardOutput);
-    }
+        => await GetHistoryEntriesAsync(root, cancellationToken).ConfigureAwait(false);
 
     public async Task<CommandResult> ExecuteAsync(VcsRequest request, CancellationToken cancellationToken = default)
     {
@@ -187,18 +184,6 @@ public sealed partial class LoreProvider : IVcsProvider
         if ((requireBranch && branch is null) || (!sawStatusContent && result.Count > 0)) throw LoreStatusFormatError();
         changes = result.Values.OrderBy(change => change.Path, StringComparer.OrdinalIgnoreCase).ToArray();
         return branch;
-    }
-
-    private static IReadOnlyList<HistoryEntry> ParseHistoryText(string output)
-    {
-        var result = new List<HistoryEntry>();
-        foreach (var line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var match = Regex.Match(line, @"^(?<id>\d+) (?<msg>.*)$");
-            if (!match.Success) throw new VcsException("Lore history output format is not recognized; expected `revision-number message` from `lore history --oneline`.");
-            result.Add(new HistoryEntry(match.Groups["id"].Value, "", "", match.Groups["msg"].Value));
-        }
-        return result;
     }
 
     private static string StripAnsi(string value) => Regex.Replace(value, "\\x1B\\[[0-?]*[ -/]*[@-~]", "");

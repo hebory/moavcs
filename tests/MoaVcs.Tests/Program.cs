@@ -11,6 +11,14 @@ internal static class Program
             if (args.SequenceEqual(["--remote"])) { await RemoteTests.RunAsync(); Console.WriteLine("PASS: Git origin addresses, preservation and validation"); return 0; }
             if (args.SequenceEqual(["--push"])) { await PushTests.RunAsync(); Console.WriteLine("PASS: Git first push, upstream tracking and push configuration preservation"); return 0; }
             if (args.SequenceEqual(["--conflicts"])) { await RunConflictChecks(); return 0; }
+            if (args.SequenceEqual(["--history-providers"]))
+            {
+                await ProviderTests.RunAsync();
+                await HistoryProviderTests.RunAsync();
+                Console.WriteLine("PASS: SVN, Perforce and Lore provider/history fixtures (no server connection)");
+                return 0;
+            }
+            if (args.SequenceEqual(["--history-git"])) { await HistoryGitTests.RunAsync(); Console.WriteLine("PASS: actual Git commit details and revision diffs"); return 0; }
             if (args.SequenceEqual(["--overlay"]))
             {
                 await ExplorerOverlayTests.RunAsync();
@@ -18,7 +26,7 @@ internal static class Program
                 Console.WriteLine("PASS: Explorer overlay status snapshot, worker scan, cache and settings");
                 return 0;
             }
-            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push, --conflicts, --overlay or no arguments.");
+            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push, --conflicts, --overlay, --history-git, --history-providers or no arguments.");
             TextDiffTests.Run();
             Console.WriteLine("PASS: line comparison alignment, bounded fallback, Unicode, cancellation and newline labels");
             await ProcessTests.RunAsync();
@@ -32,6 +40,10 @@ internal static class Program
             await RunConflictChecks();
             await ProviderTests.RunAsync();
             Console.WriteLine("PASS: SVN, Perforce and Lore adapter contracts");
+            await HistoryProviderTests.RunAsync();
+            Console.WriteLine("PASS: SVN and Perforce committed history detail fixtures (no server connection)");
+            await HistoryGitTests.RunAsync();
+            Console.WriteLine("PASS: actual Git commit details and revision diffs");
             await RunLoreChecks();
             await ShellTests.RunAsync();
             Console.WriteLine("PASS: Explorer command quoting and settings persistence");
@@ -47,6 +59,7 @@ internal static class Program
 
     private static async Task RunLoreChecks()
     {
+        await HistoryLoreTests.RunAsync();
         await LoreComparisonTests.RunAsync();
         Console.WriteLine("PASS: Lore comparison snapshots, pinned revisions, JSON validation and cleanup");
         await LoreBlameTests.RunAsync();

@@ -18,6 +18,7 @@ public static class ProviderTests
         await LoreUsesDocumentedTextFormatsAndRepositoryMarker();
         await LoreRejectsUnrecognizedStatus();
         await LorePreservesPathsAndParsesMetadata();
+        await LoreRejectsMalformedHistoryAndMismatchedRevision();
         await SvnRejectsUnsafeCloneArguments();
         await RejectsPathTraversal();
     }
@@ -198,7 +199,19 @@ public static class ProviderTests
         Directory.CreateDirectory(Path.Combine(temp.Path, ".lore"));
         File.WriteAllText(Path.Combine(temp.Path, ".lore", "config.toml"), "remote_url = \"lores://example.test/project\"\n");
         const string status = "Repository example\nOn branch main revision 3 -> abc123\nChanges staged for commit:\nM docs/readme.md\nUntracked files:\nA notes [draft].txt\n";
-        const string history = "12 docs update\n";
+        var history = string.Join("\n", new[]
+        {
+            JsonLine("revisionHistory", new { repository = "01a1c13279f1761c83e85c5af1e541de", branch = "main" }),
+            JsonLine("revisionHistoryEntry", new { revision = new string('a', 64), revisionNumber = 12,
+                parent = new[] { new string('0', 64), new string('0', 64) } }),
+            JsonLine("metadata", new { key = "message", value = new { tagName = "string", data = "docs update\nmore detail" } }),
+            JsonLine("metadata", new { key = "created-by", value = new { tagName = "string", data = "dev@example.invalid" } }),
+            JsonLine("metadata", new { key = "committed-by", value = new { tagName = "string", data = "dev@example.invalid" } }),
+            JsonLine("metadata", new { key = "timestamp", value = new { tagName = "numeric", data = 1794268800000L } }),
+            JsonLine("complete", new { status = 0, error = new { errorCode = 0, message = "", traceLocations = Array.Empty<object>() } }),
+            JsonLine("authUserInfo", new { id = "dev@example.invalid", name = "Developer" }),
+            JsonLine("complete", new { status = 0, error = new { errorCode = 0, message = "", traceLocations = Array.Empty<object>() } })
+        });
         var runner = new FakeRunner(Ok(status), Ok(status), Ok(history));
         var provider = new LoreProvider(runner);
         var info = await provider.GetRepositoryAsync(temp.Path);
@@ -209,13 +222,84 @@ public static class ProviderTests
         Equal("notes [draft].txt", changes[1].Path);
         var entries = await provider.GetHistoryAsync(temp.Path);
         Equal("12", entries[0].Id);
-        Equal("docs update", entries[0].Message);
+        Equal("docs update\nmore detail", entries[0].Message);
+        Equal("dev@example.invalid", entries[0].Author);
+        True(entries[0].Date.Contains("UTC", StringComparison.Ordinal), "Lore history should expose the timestamp as UTC.");
+        Contains(runner.Commands[2].Arguments, "--json");
+        Contains(runner.Commands[2].Arguments, "--local");
+        Contains(runner.Commands[2].Arguments, "history");
         True(runner.Commands[0].Arguments.Contains("--scan"), "Lore status must reconcile working-tree changes.");
         Equal("status", runner.Commands[0].Arguments[2]);
         True(changes[0].IsStaged, "Lore staged status must remain distinct from worktree status.");
         True((provider.Capabilities & VcsCapabilities.Commit) != 0, "Lore exposes commit for its staged revision.");
         True((provider.Capabilities & VcsCapabilities.FileComparison) != 0, "Lore exposes committed and working file snapshots.");
         True((provider.Capabilities & VcsCapabilities.Blame) != 0, "Lore provides revision-pinned JSON audit attribution.");
+    }
+
+    private static async Task LoreRejectsMalformedHistoryAndMismatchedRevision()
+    {
+        using var temp = new TempDirectory();
+        var malformed = new LoreProvider(new FakeRunner(Ok("not JSON\n")));
+        try
+        {
+            await malformed.GetHistoryAsync(temp.Path);
+            throw new InvalidOperationException("Malformed Lore history events must not be accepted.");
+        }
+        catch (VcsException ex) when (ex.Message.Contains("JSON", StringComparison.Ordinal)) { }
+
+        var revision = JsonLine("revisionInfo", new
+        {
+            repository = "01a1c13279f1761c83e85c5af1e541de",
+            revision = new string('a', 64), revisionNumber = 13,
+            parent = new[] { new string('0', 64), new string('0', 64) }
+        });
+        var complete = JsonLine("complete", new { status = 0, error = new { errorCode = 0, message = "", traceLocations = Array.Empty<object>() } });
+        var mismatched = new LoreProvider(new FakeRunner(Ok(string.Join("\n", revision, complete,
+            JsonLine("complete", new { status = 0, error = new { errorCode = 0, message = "", traceLocations = Array.Empty<object>() } })))));
+        try
+        {
+            await mismatched.GetHistoryDetailsAsync(temp.Path, "12");
+            throw new InvalidOperationException("Lore history details must reject a different resolved revision number.");
+        }
+        catch (VcsException ex) when (ex.Message.Contains("일치하지 않습니다", StringComparison.Ordinal)) { }
+
+        var primaryHistory = JsonLine("revisionHistoryEntry", new
+        {
+            revision = new string('b', 64), revisionNumber = 4,
+            parent = new[] { new string('0', 64), new string('0', 64) }
+        });
+        var primaryComplete = JsonLine("complete", new { status = 0, error = new { errorCode = 0, message = "", traceLocations = Array.Empty<object>() } });
+        var authLog = JsonLine("log", new
+        {
+            level = "error", category = 0, timestamp = 0,
+            location = "lore_revision::relay",
+            message = "No remote configured\n  at lore\\src\\auth.rs:794:59"
+        });
+        var authComplete = JsonLine("complete", new
+        {
+            status = 111,
+            error = new
+            {
+                errorCode = 111, message = "No remote configured",
+                traceLocations = new[] { new { file = "lore\\src\\auth.rs", line = 794, column = 59, context = "" } }
+            }
+        });
+        var recognized = new LoreProvider(new FakeRunner(Ok(string.Join("\n", primaryHistory, primaryComplete, authLog, authComplete))));
+        Equal("4", (await recognized.GetHistoryAsync(temp.Path)).Single().Id);
+
+        var unrelatedLog = JsonLine("log", new
+        {
+            level = "error", category = 0, timestamp = 0,
+            location = "another_operation",
+            message = "No remote configured\n  at lore\\src\\auth.rs:794:59"
+        });
+        var unrelated = new LoreProvider(new FakeRunner(Ok(string.Join("\n", primaryHistory, primaryComplete, unrelatedLog, authComplete))));
+        try
+        {
+            await unrelated.GetHistoryAsync(temp.Path);
+            throw new InvalidOperationException("An unrelated post-query failure must not be hidden as an author lookup failure.");
+        }
+        catch (VcsException ex) when (ex.Message.Contains("예상하지 못한 이벤트", StringComparison.Ordinal)) { }
     }
 
     private static async Task LoreRejectsUnrecognizedStatus()
@@ -289,6 +373,7 @@ public static class ProviderTests
     }
 
     private static CommandResult Ok(string stdout) => new(0, stdout, string.Empty);
+    private static string JsonLine(string tagName, object data) => System.Text.Json.JsonSerializer.Serialize(new { tagName, data });
     private static string Escape(string value) => System.Security.SecurityElement.Escape(value) ?? value;
 
     private static void Equal<T>(T expected, T actual)
