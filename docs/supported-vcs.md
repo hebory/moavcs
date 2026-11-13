@@ -32,6 +32,21 @@ Git에서 오른쪽 미리 보기의 **커밋할 내용**을 선택하면 커밋
 
 현재 포함하지 않는 기능: 충돌 해결 편집기, 브랜치 생성·전환 UI, Perforce changelist 제출, 파일 상태 오버레이 아이콘, Windows 11 최상위 현대식 메뉴용 COM/MSIX 확장. 기존 CLI의 인증 설정을 사용하며 GUI 로그인·비밀번호 저장은 제공하지 않습니다.
 
+## 커밋 세부 내역
+
+**커밋 이력**에서 기록을 고르면 전체 메시지, 작성자·날짜, 변경 파일 목록을 표시합니다. 파일 선택 시 현재 작업 트리 대신 선택한 기록에서 바뀐 내용을 조회합니다.
+
+| 시스템 | 비교 기준 |
+|---|---|
+| Git | 부모 커밋 → 선택한 커밋. 첫 커밋은 빈 트리, 병합 커밋은 첫 번째 부모를 기준으로 표시 |
+| SVN | 저장소 전체의 rN−1 → rN. 경로는 작업 폴더가 아닌 저장소 기준이며 복사 원본도 표시 |
+| Perforce | 각 파일의 이전 리비전 → 선택한 제출 changelist의 리비전. depot 경로를 표시하고 추가·삭제 파일도 조회 |
+| Lore | 선택한 리비전의 저장된 메시지·파일 변경과 이전 리비전 비교 |
+
+내역 조회는 작업 파일을 수정하거나 체크아웃하지 않습니다. SVN·Perforce는 서버 연결과 해당 리비전의 읽기 권한이 필요합니다. 바이너리·너무 큰 텍스트·접근할 수 없는 과거 내용은 해당 파일의 안내나 CLI 오류를 표시합니다. 미리 보기는 2,500줄까지 표시합니다.
+
+SVN·Perforce 구현 기준: [SVN diff](https://svnbook.red-bean.com/en/1.8/svn.ref.svn.c.diff.html), [P4 describe](https://help.perforce.com/helix-core/server-apps/cmdref/current/Content/CmdRef/p4_describe.html), [P4 JSON 출력](https://help.perforce.com/helix-core/server-apps/cmdref/current/Content/CmdRef/global.options.html), [P4 diff2](https://help.perforce.com/helix-core/server-apps/cmdref/current/Content/CmdRef/p4_diff2.html). 서버 없는 fixture 검증과 실제 Git·Lore 로컬 저장소 검증은 구분합니다.
+
 ## 원격 주소 설정
 
 Git 저장소를 연 뒤 위쪽 **저장소 → 원격 주소 설정…** 또는 탐색기 메뉴 **MoaVCS → 원격 주소…**에서 `origin`을 조회·추가·수정합니다. 주소 편집에는 Git 2.30 이상이 필요합니다. 편집 대상은 저장된 기본 fetch URL 하나입니다. 추가 fetch URL, 별도의 `pushurl`, 다른 remote, 브랜치 추적 설정을 보존합니다. 별도 push URL이 있으면 기본 주소를 바꿔도 push 대상은 유지되며 창에 이 내용을 표시합니다. HTTPS·SSH·Git의 SCP 형식·로컬 경로를 입력할 수 있습니다.
