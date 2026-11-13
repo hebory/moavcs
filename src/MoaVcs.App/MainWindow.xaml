@@ -111,7 +111,69 @@
           <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Background="#FCFCFD" Padding="16,12"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="변경 기록 남기기" FontWeight="SemiBold"/><TextBlock x:Name="CommitHint" Text="커밋에 포함할 파일을 먼저 선택하세요." FontSize="11" Foreground="{StaticResource Muted}" Margin="0,4,0,8" TextWrapping="Wrap"/><Grid><TextBox x:Name="CommitMessage" MinHeight="53" MaxHeight="88" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" ToolTip="변경 내용을 설명하는 커밋 메시지" AutomationProperties.Name="변경 설명" TextChanged="CommitMessage_TextChanged"/><TextBlock Text="무엇을 바꿨나요? 예: 검색 결과 정렬 오류 수정" Foreground="{StaticResource Muted}" Margin="11,10" VerticalAlignment="Top" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=CommitMessage}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></Grid></StackPanel><StackPanel Grid.Column="1" Margin="14,20,0,0" VerticalAlignment="Center"><Button x:Name="CommitButton" Content="커밋" Style="{StaticResource AccentButton}" Padding="22,12" Click="Commit_Click" ToolTip="변경 설명과 함께 기록합니다 (Ctrl+Enter)."/><TextBlock x:Name="CommitDestinationHint" Text="이 PC에 기록" FontSize="10" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" Margin="0,6,0,0"/></StackPanel></Grid></Border>
          </Grid>
         </TabItem>
-        <TabItem x:Name="HistoryTab" Header="커밋 이력"><Grid><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><DataGrid x:Name="HistoryGrid" SelectionMode="Single"><DataGrid.Columns><DataGridTextColumn Header="리비전" Binding="{Binding Id}" Width="110"/><DataGridTextColumn Header="메시지" Binding="{Binding Message}" Width="*"/><DataGridTextColumn Header="작성자" Binding="{Binding Author}" Width="140"/><DataGridTextColumn Header="날짜" Binding="{Binding Date}" Width="190"/></DataGrid.Columns></DataGrid><TextBlock Grid.Row="1" x:Name="HistoryHint" Text="최근 100개 기록" FontSize="11" Foreground="{StaticResource Muted}" Margin="15,12"/></Grid></TabItem>
+        <TabItem x:Name="HistoryTab" Header="커밋 이력">
+         <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="2*" MinHeight="150"/><RowDefinition Height="6"/><RowDefinition Height="3*" MinHeight="260"/></Grid.RowDefinitions>
+          <Grid>
+           <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+           <DataGrid x:Name="HistoryGrid" SelectionMode="Single" RowHeight="34" SelectionChanged="HistoryGrid_SelectionChanged" AutomationProperties.Name="커밋 이력 목록">
+            <DataGrid.Columns>
+             <DataGridTextColumn Header="리비전" Binding="{Binding Id}" Width="130"/>
+             <DataGridTextColumn Header="메시지" Binding="{Binding Summary}" Width="*">
+              <DataGridTextColumn.ElementStyle>
+               <Style TargetType="TextBlock">
+                <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                <Setter Property="ToolTip" Value="{Binding Message}"/>
+               </Style>
+              </DataGridTextColumn.ElementStyle>
+             </DataGridTextColumn>
+             <DataGridTextColumn Header="작성자" Binding="{Binding Author}" Width="150"/>
+             <DataGridTextColumn Header="날짜" Binding="{Binding Date}" Width="190"/>
+            </DataGrid.Columns>
+           </DataGrid>
+           <TextBlock Grid.Row="1" x:Name="HistoryHint" Text="최근 기록" FontSize="11" Foreground="{StaticResource Muted}" Margin="15,8"/>
+          </Grid>
+          <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch" Background="#F0F2F5"/>
+          <Grid Grid.Row="2">
+           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="5"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+           <Border Padding="14,10" Background="#F7F9FC" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1">
+            <Grid>
+             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+             <DockPanel>
+              <TextBlock x:Name="HistoryDetailStatus" DockPanel.Dock="Right" Text="커밋을 선택하면 변경 파일과 내용을 볼 수 있습니다." FontSize="11" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+              <TextBox x:Name="HistoryDetailRevision" Text="커밋 세부 내역" IsReadOnly="True" BorderThickness="0" Background="Transparent" Padding="0" FontWeight="SemiBold" TextWrapping="NoWrap" MaxWidth="270" HorizontalAlignment="Left" HorizontalContentAlignment="Left" ToolTip="전체 리비전을 선택해 복사할 수 있습니다."/>
+             </DockPanel>
+             <StackPanel Grid.Row="1" Margin="0,6,0,0">
+              <TextBlock x:Name="HistoryDetailMetadata" FontSize="11" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
+              <TextBox x:Name="HistoryDetailMessage" Margin="0,5,0,0" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="76" BorderThickness="0" Background="Transparent" Padding="0" AutomationProperties.Name="전체 커밋 메시지" ToolTip="전체 메시지를 선택해 복사할 수 있습니다."/>
+              <TextBlock x:Name="HistoryComparisonLabel" Margin="0,4,0,0" FontSize="10" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+             </StackPanel>
+            </Grid>
+           </Border>
+           <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="#F0F2F5"/>
+           <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="2*" MinWidth="190"/><ColumnDefinition Width="5"/><ColumnDefinition Width="5*" MinWidth="250"/></Grid.ColumnDefinitions>
+            <Grid>
+             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+             <TextBlock Text="변경 파일" FontWeight="SemiBold" FontSize="12" Margin="14,10,10,8"/>
+             <DataGrid x:Name="HistoryFilesGrid" Grid.Row="1" SelectionMode="Single" SelectionChanged="HistoryFilesGrid_SelectionChanged" AutomationProperties.Name="커밋 변경 파일">
+              <DataGrid.Columns>
+               <DataGridTextColumn Header="상태" Binding="{Binding Status, Converter={StaticResource FileStatusLabel}}" Width="82"/>
+               <DataGridTextColumn Header="파일" Binding="{Binding Path}" Width="*"/>
+              </DataGrid.Columns>
+             </DataGrid>
+             <TextBlock x:Name="HistoryFilesEmpty" Grid.Row="1" Text="커밋을 선택하면 변경 파일이 표시됩니다." TextAlignment="Center" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="12" IsHitTestVisible="False"/>
+            </Grid>
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="#F0F2F5"/>
+            <Grid Grid.Column="2" Background="#FCFDFE">
+             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+             <DockPanel Margin="14,10,14,8"><TextBlock x:Name="HistoryDiffPath" DockPanel.Dock="Right" Foreground="{StaticResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/><TextBlock Text="커밋 변경 내용" FontWeight="SemiBold" FontSize="12"/></DockPanel>
+             <RichTextBox x:Name="HistoryDiffViewer" Grid.Row="1" IsReadOnly="True" IsDocumentEnabled="True" BorderThickness="0" Background="#FCFDFE" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="14,10" FontFamily="Cascadia Mono, Consolas" FontSize="12"><FlowDocument><Paragraph Foreground="#8290A2">파일을 선택하면 이 커밋의 변경 내용이 표시됩니다.</Paragraph></FlowDocument></RichTextBox>
+            </Grid>
+           </Grid>
+          </Grid>
+         </Grid>
+        </TabItem>
         <TabItem x:Name="OutputTab" Header="실행 기록"><TextBox x:Name="OutputLog" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Background="#F9FAFC" BorderThickness="0" FontFamily="Cascadia Mono, Consolas" FontSize="12" Margin="1"/></TabItem>
        </TabControl>
       </Border>

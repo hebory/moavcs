@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -14,6 +15,7 @@ internal static class Program
 {
     private static string? _fixture;
     private static string? _commitFixture;
+    private static string? _historyFixture;
     private static string? _conflictFixture;
     private static string? _loreFixture;
     private static string? _loreSettingsFile;
@@ -94,6 +96,7 @@ internal static class Program
             while (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible && DateTime.UtcNow < deadline) Pump();
             if (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible) throw new TimeoutException("History load did not finish.");
             if (((DataGrid)repoWindow.FindName("HistoryGrid")).Items.Count != 1) throw new InvalidOperationException("History view did not load the fixture commit.");
+            RunHistoryDetailsSmoke(settings, scratch, output);
             RunStartupActionSmoke(settings, _fixture, scratch);
             RunCancelledOperationSmoke(settings, _fixture);
             RunCommitStagingSmoke(settings, scratch);
@@ -189,16 +192,103 @@ internal static class Program
             app.Shutdown();
             return 0;
         }
-        catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+        catch (Exception ex) { Console.Error.WriteLine(ex); Application.Current?.Shutdown(); return 1; }
         finally
         {
             DeleteSmokePath(_fixture);
             DeleteSmokePath(_commitFixture);
+            DeleteSmokePath(_historyFixture);
             DeleteSmokePath(_conflictFixture);
             DeleteSmokePath(_loreFixture);
             if (_loreSettingsFile is not null && IsInsideLocal(_loreSettingsFile) && File.Exists(_loreSettingsFile))
                 File.Delete(_loreSettingsFile);
         }
+    }
+
+    private static void RunHistoryDetailsSmoke(SettingsStore settings, string scratch, string output)
+    {
+        var fixture = _historyFixture = Path.Combine(scratch, "ui-history-details-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(fixture);
+        GitAt(fixture, "init", "--initial-branch=main");
+        GitAt(fixture, "config", "user.name", "MoaVCS history test");
+        GitAt(fixture, "config", "user.email", "history-test@example.invalid");
+        File.WriteAllText(Path.Combine(fixture, "kept.txt"), "original line\nsecond line\n");
+        File.WriteAllText(Path.Combine(fixture, "removed.txt"), "old file\n");
+        GitAt(fixture, "add", "-A");
+        GitAt(fixture, "commit", "-m", "Initial history fixture");
+
+        File.WriteAllText(Path.Combine(fixture, "kept.txt"), "changed line\nsecond line\ncommit-only text\n");
+        File.Delete(Path.Combine(fixture, "removed.txt"));
+        File.WriteAllText(Path.Combine(fixture, "added.txt"), "new committed file\n");
+        const string fullMessage = "History detail summary\n\nThis body has the first explanatory line.\nIt also keeps a second line.";
+        GitAt(fixture, "add", "-A");
+        GitAt(fixture, "commit", "--cleanup=verbatim", "-m", fullMessage);
+        File.AppendAllText(Path.Combine(fixture, "kept.txt"), "worktree-only text\n");
+
+        var window = new MainWindow(new LaunchOptions(fixture), settings);
+        try
+        {
+        window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+        WaitUntilRepositoryReady(window, TimeSpan.FromSeconds(20), "History-detail fixture did not load.");
+        var tabs = (TabControl)window.FindName("MainTabs");
+        tabs.SelectedItem = window.FindName("HistoryTab");
+        WaitUntilIdle(window, TimeSpan.FromSeconds(20), "History-detail list did not load.");
+        var history = (DataGrid)window.FindName("HistoryGrid");
+        var files = (DataGrid)window.FindName("HistoryFilesGrid");
+        var status = (TextBlock)window.FindName("HistoryDetailStatus");
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while ((files.Items.Count != 3 || !status.Text.StartsWith("변경 파일", StringComparison.Ordinal)) && DateTime.UtcNow < deadline) Pump();
+        if (history.Items.Count != 2 || files.Items.Count != 3)
+            throw new InvalidOperationException("Selecting the newest commit must show its three changed files.");
+        if (((TextBox)window.FindName("HistoryDetailMessage")).Text != fullMessage)
+            throw new InvalidOperationException("Commit details must display the full multi-line commit message.");
+        if (!((TextBlock)window.FindName("HistoryDetailMetadata")).Text.Contains("MoaVCS history test", StringComparison.Ordinal) ||
+            !((TextBox)window.FindName("HistoryDetailRevision")).Text.Contains(((HistoryEntry)history.SelectedItem).Id, StringComparison.Ordinal))
+            throw new InvalidOperationException("Commit details must show author and a copyable full revision identifier.");
+        var paths = files.Items.Cast<FileChange>().ToDictionary(change => change.Path, change => change.Status, StringComparer.Ordinal);
+        if (!paths.ContainsKey("kept.txt") || !paths.ContainsKey("added.txt") || !paths.ContainsKey("removed.txt") ||
+            !paths["added.txt"].Contains("add", StringComparison.OrdinalIgnoreCase) ||
+            !paths["removed.txt"].Contains("delet", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Commit details must list modified, added, and deleted files.");
+        var diff = (RichTextBox)window.FindName("HistoryDiffViewer");
+        files.SelectedItem = files.Items.Cast<FileChange>().Single(change => change.Path == "kept.txt");
+        deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!new TextRange(diff.Document.ContentStart, diff.Document.ContentEnd).Text.Contains("commit-only text", StringComparison.Ordinal) && DateTime.UtcNow < deadline) Pump();
+        var diffText = new TextRange(diff.Document.ContentStart, diff.Document.ContentEnd).Text;
+        if (!diffText.Contains("commit-only text", StringComparison.Ordinal) || diffText.Contains("worktree-only text", StringComparison.Ordinal))
+            throw new InvalidOperationException("History diff must compare the selected commit, not the current working tree.");
+
+        files.SelectedItem = files.Items.Cast<FileChange>().Single(change => change.Path == "removed.txt");
+        deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!new TextRange(diff.Document.ContentStart, diff.Document.ContentEnd).Text.Contains("old file", StringComparison.Ordinal) && DateTime.UtcNow < deadline) Pump();
+        if (!new TextRange(diff.Document.ContentStart, diff.Document.ContentEnd).Text.Contains("old file", StringComparison.Ordinal))
+            throw new InvalidOperationException("Selecting another changed file must load that file's historical diff.");
+        files.SelectedItem = files.Items.Cast<FileChange>().Single(change => change.Path == "kept.txt");
+        files.SelectedItem = files.Items.Cast<FileChange>().Single(change => change.Path == "added.txt");
+        deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!new TextRange(diff.Document.ContentStart, diff.Document.ContentEnd).Text.Contains("new committed file", StringComparison.Ordinal) && DateTime.UtcNow < deadline) Pump();
+        if (!new TextRange(diff.Document.ContentStart, diff.Document.ContentEnd).Text.Contains("new committed file", StringComparison.Ordinal))
+            throw new InvalidOperationException("Rapid changed-file selection must leave the diff on the latest selected file.");
+
+        var older = (HistoryEntry)history.Items[1];
+        var newest = (HistoryEntry)history.Items[0];
+        history.SelectedItem = older;
+        history.SelectedItem = newest;
+        deadline = DateTime.UtcNow.AddSeconds(30);
+        while ((((TextBox)window.FindName("HistoryDetailRevision")).Text != "리비전 " + newest.Id ||
+                ((TextBox)window.FindName("HistoryDetailMessage")).Text != fullMessage) && DateTime.UtcNow < deadline) Pump();
+        if (((TextBox)window.FindName("HistoryDetailRevision")).Text != "리비전 " + newest.Id ||
+            ((TextBox)window.FindName("HistoryDetailMessage")).Text != fullMessage)
+            throw new InvalidOperationException("Rapid commit selection must leave the detail pane on the latest selected commit.");
+        deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!new TextRange(diff.Document.ContentStart, diff.Document.ContentEnd).Text.Contains("new committed file", StringComparison.Ordinal) && DateTime.UtcNow < deadline) Pump();
+        if (!new TextRange(diff.Document.ContentStart, diff.Document.ContentEnd).Text.Contains("new committed file", StringComparison.Ordinal))
+            throw new InvalidOperationException("The selected commit detail must finish loading its default file diff before rendering.");
+        Render(window, Path.Combine(output, "history-details.png"));
+        RenderAtMinimum(window, Path.Combine(output, "history-details-min.png"));
+        Console.WriteLine("PASS: Git commit history shows full message, changed files, and selected-commit diff after rapid selection");
+        }
+        finally { window.Close(); }
     }
 
     private static void RunLoreInspectionSmoke(string loreExecutable, string output)

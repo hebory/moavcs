@@ -137,11 +137,13 @@ public partial class MainWindow : Window
             {
                 var repository = await provider.GetRepositoryAsync(directory, token);
                 var changes = await provider.GetStatusAsync(repository.RootPath, token);
+                ResetHistoryDetails("저장소의 이력을 불러오는 중…");
                 _provider = provider;
                 _repository = repository;
                 _selectedPath = selectedFile;
                 _historyLoaded = false;
                 HistoryGrid.ItemsSource = null;
+                HistoryGrid.SelectedItem = null;
                 WelcomePanel.Visibility = Visibility.Collapsed;
                 RepositoryPanel.Visibility = Visibility.Visible;
                 SetRepositoryHeader();
@@ -446,6 +448,7 @@ public partial class MainWindow : Window
     private async Task RefreshAsync()
     {
         if (_repository is null || _provider is null || _busy) return;
+        ResetHistoryDetails("이력을 갱신하는 중…");
         await RunBusyAsync("변경 내용을 확인하는 중…", async token =>
         {
             _repository = await _provider.GetRepositoryAsync(_repository.RootPath, token);
@@ -484,28 +487,24 @@ public partial class MainWindow : Window
 
     private void RenderDiff(string text)
     {
-        var doc = new FlowDocument { PagePadding = new Thickness(0), FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = 12, PageWidth = 2000 };
-        var lines = text.Replace("\r\n", "\n").Split('\n');
-        foreach (var line in lines.Take(2500))
-        {
-            var paragraph = new Paragraph(new Run(line.Length > 1600 ? line[..1600] + " …" : line)) { Margin = new Thickness(0), LineHeight = 19 };
-            if (line.StartsWith('+')) { paragraph.Foreground = new SolidColorBrush(Color.FromRgb(31, 119, 76)); paragraph.Background = new SolidColorBrush(Color.FromRgb(233, 247, 238)); }
-            else if (line.StartsWith('-')) { paragraph.Foreground = new SolidColorBrush(Color.FromRgb(176, 59, 53)); paragraph.Background = new SolidColorBrush(Color.FromRgb(255, 239, 236)); }
-            else if (line.StartsWith("@@")) { paragraph.Foreground = new SolidColorBrush(Color.FromRgb(58, 101, 160)); paragraph.Background = new SolidColorBrush(Color.FromRgb(237, 243, 251)); }
-            else paragraph.Foreground = new SolidColorBrush(Color.FromRgb(83, 99, 119));
-            doc.Blocks.Add(paragraph);
-        }
-        if (lines.Length > 2500) doc.Blocks.Add(new Paragraph(new Run("미리 보기는 2,500줄까지 표시됩니다.")));
-        DiffViewer.Document = doc;
+        RenderDiff(DiffViewer, text);
     }
 
     private async Task LoadHistoryAsync(CancellationToken token)
     {
         if (_provider is null || _repository is null || !_provider.Capabilities.HasFlag(VcsCapabilities.History)) return;
-        var entries = await _provider.GetHistoryAsync(_repository.RootPath, token);
+        ResetHistoryDetails("커밋을 선택하면 변경 파일과 내용을 볼 수 있습니다.");
+        var provider = _provider;
+        var root = _repository.RootPath;
+        var entries = await provider.GetHistoryAsync(root, token);
+        if (!ReferenceEquals(_provider, provider) || !string.Equals(_repository?.RootPath, root, StringComparison.OrdinalIgnoreCase)) return;
         HistoryGrid.ItemsSource = entries;
         HistoryHint.Text = entries.Count == 0 ? "아직 커밋 이력이 없습니다." : $"최근 {entries.Count}개 기록";
         _historyLoaded = true;
+        _settingHistorySelection = true;
+        HistoryGrid.SelectedItem = entries.FirstOrDefault();
+        _settingHistorySelection = false;
+        if (entries.FirstOrDefault() is { } first) await LoadHistoryDetailsAsync(first, token);
     }
 
     private async Task ExecuteAsync(VcsOperation operation)
@@ -728,6 +727,8 @@ public partial class MainWindow : Window
         if (_busy && MessageBox.Show(this, "진행 중인 작업을 중지하고 닫을까요? 이미 적용된 변경은 되돌아가지 않습니다.", "MoaVCS", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) { e.Cancel = true; return; }
         _operation?.Cancel();
         _diffOperation?.Cancel();
+        _historyDetailOperation?.Cancel();
+        _historyDiffOperation?.Cancel();
     }
 }
 
