@@ -5,7 +5,7 @@ using MoaVcs.Core;
 
 namespace MoaVcs.App.Services;
 
-public sealed record RecentRepository(string Path, VcsKind VcsKind);
+public sealed record RecentRepository(string Path, VcsKind VcsKind, bool IsPinned = false);
 
 public enum ExternalToolKind { Diff, Blame }
 
@@ -70,10 +70,7 @@ public sealed class SettingsStore
                     tool.ArgumentTemplates ??= [];
                 }
             }
-            loaded.RecentRepositories = loaded.RecentRepositories
-                .Where(r => r is not null && !string.IsNullOrWhiteSpace(r.Path))
-                .DistinctBy(r => Path.GetFullPath(r.Path), StringComparer.OrdinalIgnoreCase)
-                .Take(20).ToList();
+            loaded.RecentRepositories = RepositoryHistory.Normalize(loaded.RecentRepositories);
             return loaded;
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
@@ -135,6 +132,15 @@ public sealed class SettingsStore
         var settings = Load();
         if (LoadWarning is { } warning) throw new IOException(warning);
         settings.RecentRepositories = repositories;
+        Save(settings);
+    }
+
+    internal void UpdateRecentRepositories(Func<List<RecentRepository>, List<RecentRepository>> update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        var settings = Load();
+        if (LoadWarning is { } warning) throw new IOException(warning);
+        settings.RecentRepositories = RepositoryHistory.Normalize(update(settings.RecentRepositories));
         Save(settings);
     }
 

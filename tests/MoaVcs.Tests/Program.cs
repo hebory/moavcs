@@ -20,6 +20,7 @@ internal static class Program
             }
             if (args.SequenceEqual(["--history-git"])) { await HistoryGitTests.RunAsync(); Console.WriteLine("PASS: actual Git commit details and revision diffs"); return 0; }
             if (args.SequenceEqual(["--checkout"])) { CheckoutPathTests.Run(); Console.WriteLine("PASS: checkout repository names and safe destination paths"); return 0; }
+            if (args.SequenceEqual(["--repositories"])) { RepositoryHistoryTests.Run(); Console.WriteLine("PASS: repository history pinning, removal, migration and settings preservation"); return 0; }
             if (args.SequenceEqual(["--overlay"]))
             {
                 await ExplorerOverlayTests.RunAsync();
@@ -27,7 +28,9 @@ internal static class Program
                 Console.WriteLine("PASS: Explorer overlay status snapshot, worker scan, cache and settings");
                 return 0;
             }
-            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push, --conflicts, --overlay, --history-git, --history-providers, --checkout or no arguments.");
+            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push, --conflicts, --overlay, --history-git, --history-providers, --checkout, --repositories or no arguments.");
+            RepositoryHistoryTests.Run();
+            Console.WriteLine("PASS: repository history pinning, removal, migration and settings preservation");
             CheckoutPathTests.Run();
             Console.WriteLine("PASS: checkout repository names and safe destination paths");
             TextDiffTests.Run();
