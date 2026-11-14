@@ -161,6 +161,26 @@ fn real_git_workflow_preserves_literal_paths_history_remote_and_conflicts() {
     std::fs::rename(base.join(file), base.join("이름 변경.txt")).unwrap();
     stage.paths = vec![file.into(), "이름 변경.txt".into(), added.into()];
     provider.execute(&stage, &CancelToken::new()).unwrap();
+    let mut unstage_rename = req(Operation::Unstage, &base);
+    unstage_rename.paths = vec!["이름 변경.txt".into()];
+    provider
+        .execute(&unstage_rename, &CancelToken::new())
+        .unwrap();
+    let after_unstage = provider.status(&base, &CancelToken::new()).unwrap();
+    assert!(
+        after_unstage
+            .iter()
+            .filter(|row| row.path == file || row.path == "이름 변경.txt")
+            .all(|row| !row.staged()),
+        "both index paths of a rename must be unstaged"
+    );
+    assert!(
+        after_unstage
+            .iter()
+            .any(|row| row.path == added && row.staged()),
+        "unrelated staged files must stay staged"
+    );
+    provider.execute(&stage, &CancelToken::new()).unwrap();
     commit(&provider, &base, "경로 변경 및 두 번째 커밋");
     let history = provider
         .history(&base, HistoryScope::AllBranches, &CancelToken::new())

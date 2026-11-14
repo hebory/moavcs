@@ -265,9 +265,24 @@ impl VcsProvider for GitProvider {
             }
             Operation::Stage | Operation::Unstage => {
                 let root = self.root(&working, cancel)?;
-                let paths = self.validate_request_paths(&root, &request.paths)?;
+                let mut paths = self.validate_request_paths(&root, &request.paths)?;
                 if paths.is_empty() {
                     return Err(VcsError("먼저 파일을 하나 이상 선택하세요.".into()));
+                }
+                if request.operation == Operation::Unstage {
+                    // A staged rename is one UI row but two index paths. Restore both
+                    // halves while preserving unrelated staged changes.
+                    for change in self.status(&root, cancel)? {
+                        if let Some(original) = change.original_path {
+                            if paths.contains(&change.path) || paths.contains(&original) {
+                                for related in [original, change.path] {
+                                    if !paths.contains(&related) {
+                                        paths.push(related);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 let mut args = vec!["--literal-pathspecs".into()];
                 if request.operation == Operation::Stage {
