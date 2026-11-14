@@ -76,7 +76,7 @@
      </StackPanel></ScrollViewer>
     </Grid>
     <StackPanel Grid.Row="3">
-     <Button Style="{StaticResource NavButton}" Click="Settings_Click" ToolTip="버전 관리 도구, 비교·이력 도구, 탐색기 메뉴"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" Margin="0,0,12,0"/><TextBlock Text="설정"/></StackPanel></Button>
+     <Button x:Name="SidebarSettingsButton" Style="{StaticResource NavButton}" Click="Settings_Click" ToolTip="버전 관리 도구, 비교·이력 도구, 탐색기 메뉴"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" Margin="0,0,12,0"/><TextBlock Text="설정"/></StackPanel></Button>
      <TextBlock x:Name="VersionText" Text="MoaVCS" Foreground="#5F738D" FontSize="10" Margin="13,14,0,0"/>
     </StackPanel>
    </Grid>

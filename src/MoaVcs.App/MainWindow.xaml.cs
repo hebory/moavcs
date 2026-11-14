@@ -118,7 +118,7 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private async Task OpenRepositoryAsync(string path, VcsKind? kind = null, string action = "open")
+    private async Task OpenRepositoryAsync(string path, VcsKind? kind = null, string action = "open", bool remember = true)
     {
         if (_busy) return;
         try
@@ -152,7 +152,8 @@ public partial class MainWindow : Window
                 ApplyChanges(changes);
                 MainTabs.SelectedItem = action == "log" ? HistoryTab : ChangesTab;
                 if (action == "log") await LoadHistoryAsync(token);
-                RememberRepository(repository);
+                if (remember) RememberRepository(repository);
+                else RefreshRepositoryHistory();
                 Log($"{provider.Name} · {repository.RootPath}");
             });
             if (_repository?.RootPath is not null && _provider == provider)
@@ -658,7 +659,8 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         var dialog = new SettingsWindow(_settings, _settingsStore, _runner, fileTools: fileTools);
-        if (_showDialog(dialog) == true && _repository is not null) await OpenRepositoryAsync(_repository.RootPath, _repository.Kind);
+        if (_showDialog(dialog) == true && _repository is not null)
+            await OpenRepositoryAsync(_repository.RootPath, _repository.Kind, remember: false);
     }
 
     private async void Create_Click(object sender, RoutedEventArgs e)

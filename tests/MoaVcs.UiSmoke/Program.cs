@@ -407,7 +407,17 @@ internal static class Program
                 new RecentRepository(Path.Combine(root, "최근 작업", "project-" + index), VcsKind.Git)));
             var store = new SettingsStore(Path.Combine(root, "settings.json"));
             store.Save(new AppSettings { RecentRepositories = entries });
-            window = new MainWindow(new LaunchOptions(active), store);
+            window = new MainWindow(new LaunchOptions(active), store, showDialog: dialog =>
+            {
+                var save = Descendants((DependencyObject)dialog.Content).OfType<Button>().Single(button => button.Name == "SaveSettingsButton");
+                var timeout = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+                timeout.Tick += (_, _) => { timeout.Stop(); dialog.Close(); };
+                dialog.Dispatcher.BeginInvoke(new Action(() => save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent))));
+                timeout.Start();
+                var result = dialog.ShowDialog();
+                timeout.Stop();
+                return result;
+            });
             window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
             WaitUntilRepositoryReady(window, TimeSpan.FromSeconds(20), "Sidebar fixture did not load.");
             var recent = (ItemsControl)window.FindName("RecentList");
@@ -475,6 +485,10 @@ internal static class Program
             InvokeItemMenu(client, "RepositoryPinMenuItem");
             if (pinned.Items.Count != 2 || recent.Items.Count != 1 || store.Load().RecentRepositories.Single(item => item.Path == client).IsPinned)
                 throw new InvalidOperationException("Unpinning must return the selected repository to recent history.");
+            ((Button)window.FindName("SidebarSettingsButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            WaitUntilIdle(window, TimeSpan.FromSeconds(20), "Settings refresh did not finish.");
+            if (store.Load().RecentRepositories.Any(item => item.Path == active) || recent.Items.Count != 1 || pinned.Items.Count != 2)
+                throw new InvalidOperationException("Saving preferences must not re-add the open repository after it was removed from history.");
             Render(window, Path.Combine(output, "sidebar-cleaned.png"));
             Console.WriteLine("PASS: sidebar search, complete history, active highlight, pin/unpin, remove, clear and stale-settings preservation");
         }
