@@ -3,7 +3,8 @@
 - 기존 구조와 제공자별 기능 차이를 유지하고 요청 범위만 변경한다.
 - GUI 기능은 작업 공간·저장소 메뉴·파일 도구 메뉴·설정 탭 중 목적에 맞는 위치에 배치한다. 새 기능마다 상단 버튼을 추가하지 말고, 초보자의 작업 순서와 제공자별 동작 차이를 안내한다.
 - 작업을 기능·수정 단계로 나누고, 관련 검증을 통과한 단계마다 한글 커밋 메시지로 커밋한 뒤 현재 원격 브랜치에 푸시한다. 무관한 변경을 함께 커밋하지 않는다.
-- Windows 검증은 `scripts/verify.ps1`을 사용한다. UI만 변경했으면 먼저 WPF smoke 검사를 수행한다.
+- Windows 검증은 `scripts/verify.ps1`을 사용한다. GUI만 변경했으면 먼저 Rust GUI smoke 검사(`moavcs --ui-smoke <출력 폴더>`)를 수행한다.
+- 기본 구현과 배포는 Cargo 워크스페이스의 Rust 앱·코어·탐색기 DLL을 사용한다. 기존 C#/WPF/C++ 구현은 이식 비교용이며 새 실행 파일에서 호출하지 않는다.
 - 배포 태그는 `v<major>.<minor>.<patch>` 형식이다. GitHub Release의 설치 파일은 `.github/workflows/release.yml`과 `scripts/package.ps1`에서 생성한다.
 - 각 VCS의 CLI가 없는 환경에서는 fixture 검증과 실제 연결 검증을 구분해서 보고한다.
 - VCS 다운로드 버튼은 검증한 공식 배포자의 HTTPS 페이지로 연결한다.

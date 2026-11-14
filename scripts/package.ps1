@@ -6,15 +6,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $workspace = Split-Path -Parent $PSScriptRoot
-$project = Join-Path $workspace "src/MoaVcs.App/MoaVcs.App.csproj"
 $installerScript = Join-Path $workspace "installer/MoaVcs.iss"
 $artifactRoot = [IO.Path]::GetFullPath((Join-Path $workspace "artifacts"))
 $publishOutput = [IO.Path]::GetFullPath((Join-Path $artifactRoot "publish/win-x64"))
 $releaseOutput = [IO.Path]::GetFullPath((Join-Path $artifactRoot "release"))
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    [xml]$projectXml = Get-Content -LiteralPath $project -Raw
-    $Version = $projectXml.SelectSingleNode("/Project/PropertyGroup/Version").InnerText
+    $Version = & (Join-Path $PSScriptRoot 'version.ps1')
 }
 if ($Version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
     throw "Version must be a stable numeric version such as 1.2.3."

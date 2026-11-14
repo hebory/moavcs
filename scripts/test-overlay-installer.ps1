@@ -17,8 +17,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $workspace = Split-Path -Parent $PSScriptRoot
 $installer = Join-Path $workspace 'artifacts/publish/win-x64/shell/MoaVcsShellSetup.exe'
 if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Missing native shell installer: $installer." }
-[xml]$project = Get-Content -LiteralPath (Join-Path $workspace 'src/MoaVcs.App/MoaVcs.App.csproj') -Raw
-$version = $project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
+$version = & (Join-Path $PSScriptRoot 'version.ps1')
 
 $overlayNames = @('MoaVCS1Conflict', 'MoaVCS2Modified', 'MoaVCS3Untracked')
 $priorityOverlayNames = @('    MoaVCS1Conflict', '    MoaVCS2Modified', '    MoaVCS3Untracked')

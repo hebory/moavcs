@@ -7,7 +7,7 @@ Windows x64 공개 릴리스는 안정 버전 태그를 원격 저장소에 푸�
 
 태그 빌드가 성공하면 공개 GitHub Release에 아래 세 파일이 첨부됩니다.
 
-- moavcs-버전-win-x64-setup.exe: .NET 런타임을 포함한 per-user 설치 파일
+- moavcs-버전-win-x64-setup.exe: Rust 앱과 탐색기 구성 요소의 per-user 설치 파일
 - moavcs-버전-win-x64-portable.zip: 압축 해제 후 실행하는 포터블 앱
 - SHA256SUMS.txt: 설치 파일과 ZIP의 SHA-256 해시
 
@@ -21,14 +21,16 @@ v0.9.0부터 설치 파일과 포터블 ZIP에는 `shell/MoaVcsShellSetup.exe`�
 
 격리된 Windows CI는 기존 앱 설치 검사 외에 별도 셸 확장 설치·실제 COM 인터페이스 조회·상태 캐시 공유·일반/우선순위 전환·제거를 검사합니다. 실행 중인 탐색기에 DLL이 로드되면 업데이트는 버전별 DLL 경로를 사용하고 제거 시 파일 삭제가 다음 재부팅으로 미뤄질 수 있습니다.
 
-검증 단계는 SHA-256을 고정한 공식 Lore 0.13.0 CLI로 오프라인 저장소의 좌우 비교·Blame과 WPF 파일 도구를 검사합니다. 테스트용 CLI는 설치 파일이나 포터블 ZIP에 포함하지 않습니다.
+v0.14.0부터 앱·코어·탐색기 상태 배지 DLL을 Cargo로 빌드합니다. 실행에 .NET 런타임이 필요하지 않으며, Windows MSVC 런타임은 정적으로 연결합니다. `Cargo.lock`을 커밋하고 검증·배포는 `--locked`로 수행합니다. 기존 설치 AppId, 실행 파일 이름, 설정 경로와 탐색기 시작 인자는 유지합니다.
+
+검증 단계는 SHA-256을 고정한 공식 Lore 0.13.0 CLI로 오프라인 저장소의 좌우 비교·Blame을 검사합니다. Rust GUI smoke는 별도의 설정과 임시 저장소를 사용하며 실제 창의 화면을 캡처합니다. 테스트용 CLI는 설치 파일이나 포터블 ZIP에 포함하지 않습니다.
 
 탐색기 메뉴 검사는 공백이 있는 설치 경로에서 폴더·배경·파일별 메뉴 구성, 커밋·업데이트 바로가기, 단일 선택 설정, 구분선의 레지스트리 자료형을 확인합니다. 바로가기를 껐을 때 하위 메뉴로 복귀하는지, 구버전 메뉴가 중복 없이 교체되는지 검사합니다. 다른 실행 파일이 등록한 메뉴를 보존하고 현재 설치본을 제거하면 소유 메뉴 키가 남지 않는지도 확인합니다.
 
 v0.8.1의 동작별 탐색기 아이콘은 설치 파일과 포터블 ZIP 모두에 포함됩니다. 설치 검사는 13개 ICO의 존재·헤더·이미지 범위·다중 크기와 각 메뉴의 아이콘 경로를 확인합니다.
 
-CI는 master와 codex/* 브랜치 푸시, master 대상 pull request에서 scripts/verify.ps1을 실행합니다. v<major>.<minor>.<patch> 태그의 릴리스 workflow는 같은 검증을 수행한 다음 self-contained publish, Inno Setup 설치 파일, ZIP 및 해시를 만듭니다. 마지막으로 별도의 포터블 Windows runner 폴더에 설치·제거하고 파일 설치, 사용자 레지스트리 메뉴 등록 및 제거를 검사한 뒤 GitHub Release를 공개합니다. 이 설치 검사는 GitHub Actions의 격리된 Windows runner에서만 실행됩니다.
+CI는 master와 codex/* 브랜치 푸시, master 대상 pull request에서 scripts/verify.ps1을 실행합니다. v<major>.<minor>.<patch> 태그의 릴리스 workflow는 같은 검증을 수행한 다음 Rust release 빌드, Inno Setup 설치 파일, ZIP 및 해시를 만듭니다. 태그 버전은 Cargo.toml의 workspace 버전과 일치해야 합니다. 마지막으로 별도의 Windows runner 폴더에 설치·제거하고 파일 설치, 사용자 레지스트리 메뉴 등록 및 제거를 검사한 뒤 GitHub Release를 공개합니다. 이 설치 검사는 GitHub Actions의 격리된 Windows runner에서만 실행됩니다.
 
 로컬에서는 아래 명령으로 같은 설치 파일과 포터블 패키지를 만들 수 있습니다. Inno Setup Compiler가 필요합니다.
 
-    .\scripts\package.ps1 -Version 0.1.0
+    .\scripts\package.ps1

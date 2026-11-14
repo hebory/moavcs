@@ -16,16 +16,17 @@ jobs:
   verify:
     name: Build and verify
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up .NET 8
-        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
-        with:
-          dotnet-version: 8.0.x
+      - name: Set up Rust stable
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
       - name: Prepare verified Lore CLI for integration tests
         shell: pwsh
         run: |
@@ -48,8 +49,7 @@ jobs:
       - name: Smoke test per-user install and uninstall
         shell: pwsh
         run: |
-          [xml]$project = Get-Content src/MoaVcs.App/MoaVcs.App.csproj -Raw
-          $version = $project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
+          $version = ./scripts/version.ps1
           ./scripts/test-installer.ps1 -InstallerPath "artifacts/release/moavcs-$version-win-x64-setup.exe"
       - name: Smoke test native Explorer overlay installer
         shell: pwsh

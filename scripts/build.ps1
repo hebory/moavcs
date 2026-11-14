@@ -1,10 +1,10 @@
-param(
-    [ValidateSet("Debug", "Release")]
-    [string]$Configuration = "Release"
-)
-
-$ErrorActionPreference = "Stop"
+param([ValidateSet('Debug', 'Release')][string]$Configuration = 'Release')
+$ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
-$env:MSBuildEnableWorkloadResolver = "false"
-dotnet build (Join-Path $workspace "src/MoaVcs.App/MoaVcs.App.csproj") --configuration $Configuration -m:1 -p:UseSharedCompilation=false -p:RestoreIgnoreFailedSources=true
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Push-Location $workspace
+try {
+    $arguments = @('build', '--workspace', '--locked')
+    if ($Configuration -eq 'Release') { $arguments += '--release' }
+    cargo @arguments
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+} finally { Pop-Location }
