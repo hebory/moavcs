@@ -38,7 +38,7 @@ fn main() -> eframe::Result {
     }
     let (sender, receiver) = mpsc::channel();
     let app = MoaApp::new(startup, receiver, sender);
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1370.0, 900.0])
             .with_min_inner_size([860.0, 620.0])
@@ -46,6 +46,7 @@ fn main() -> eframe::Result {
             .with_icon(app_icon()),
         ..Default::default()
     };
+    configure_graphics(&mut options);
     eframe::run_native(
         "MoaVCS",
         options,
@@ -54,6 +55,16 @@ fn main() -> eframe::Result {
             Ok(Box::new(app))
         }),
     )
+}
+
+pub(crate) fn configure_graphics(_options: &mut eframe::NativeOptions) {
+    #[cfg(windows)]
+    {
+        // Windows machines without a Vulkan driver can use DX12/WARP. Keep
+        // the standard WGPU_BACKEND override available for diagnostics.
+        _options.wgpu_options.supported_backends = wgpu::util::backend_bits_from_env()
+            .unwrap_or(wgpu::Backends::DX12 | wgpu::Backends::VULKAN);
+    }
 }
 
 fn app_icon() -> std::sync::Arc<eframe::egui::IconData> {

@@ -40,6 +40,8 @@ Git 검사는 임시 로컬 저장소와 bare 원격을 사용합니다. SVN·Pe
 
 GUI는 `cargo run -p moavcs-app -- --ui-smoke artifacts/screenshots/rust`로 별도 확인할 수 있습니다. 실제 탐색기 레지스트리·COM 설치/제거 검사는 GitHub Actions의 격리된 Windows runner에서만 수행하며, GUI smoke가 그 설치 검사를 대체하지 않습니다.
 
+Windows GUI 빌드는 wgpu의 `dx12` 기능을 명시적으로 활성화합니다. Vulkan 드라이버가 없는 환경도 DX12 어댑터를 탐색하며, GitHub runner에서는 Windows 소프트웨어 렌더러를 사용할 수 있습니다. `$env:WGPU_BACKEND='dx12'`로 해당 경로를 지정해 진단할 수 있습니다. GUI smoke는 사용한 backend와 장치 종류를 로그 및 `renderer.json`에 남깁니다.
+
 ## 모듈과 호환성
 
 - `crates/moavcs-core`: 제공자 인터페이스·프로세스 취소/출력 제한·Git/SVN/Perforce/Lore·Diff/Blame/충돌·설정·경로·외부 도구·오버레이 바이너리 규약

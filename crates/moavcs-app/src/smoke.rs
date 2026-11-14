@@ -45,13 +45,14 @@ pub fn run(output: PathBuf) -> eframe::Result {
         receiver,
         sender,
     );
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1370.0, 900.0])
             .with_min_inner_size([860.0, 620.0])
             .with_title("MoaVCS UI Smoke"),
         ..Default::default()
     };
+    crate::configure_graphics(&mut options);
     let global_git_config = output.join("empty-global-gitconfig");
     if let Err(error) = fs::write(&global_git_config, b"") {
         fail(&output, &format!("isolated git config: {error}"));
@@ -69,10 +70,25 @@ pub fn run(output: PathBuf) -> eframe::Result {
     std::env::set_var("GIT_CONFIG_GLOBAL", &global_git_config);
     std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
     std::env::set_var("LOCALAPPDATA", &isolated_local_app_data);
+    let renderer_output = output.clone();
     let result = eframe::run_native(
         "MoaVCS UI Smoke",
         options,
         Box::new(|creation| {
+            if let Some(state) = &creation.wgpu_render_state {
+                let info = state.adapter.get_info();
+                println!("UI renderer: {:?} ({:?})", info.backend, info.device_type);
+                let renderer = serde_json::json!({
+                    "backend": format!("{:?}", info.backend),
+                    "device_type": format!("{:?}", info.device_type),
+                });
+                if let Err(error) = fs::write(
+                    renderer_output.join("renderer.json"),
+                    serde_json::to_vec_pretty(&renderer).unwrap_or_default(),
+                ) {
+                    fail(&renderer_output, &format!("renderer metadata: {error}"));
+                }
+            }
             app::configure_visuals(&creation.egui_ctx);
             creation
                 .egui_ctx
