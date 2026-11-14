@@ -199,6 +199,51 @@ mod win {
             Ok(())
         }
     }
+    fn executable_marker_matches(target: Option<&str>, expected_exe: &str) -> bool {
+        target.is_some_and(|target| {
+            overlay::compare_paths(target, expected_exe) == std::cmp::Ordering::Equal
+        })
+    }
+    fn legacy_command_matches(command: Option<&str>, expected_exe: &str) -> bool {
+        command.is_some_and(|command| {
+            let (actual_exe, remainder) = if quote(expected_exe).starts_with('"') {
+                let Some(quoted) = command.strip_prefix('"') else {
+                    return false;
+                };
+                let Some(end) = quoted.find('"') else {
+                    return false;
+                };
+                (&quoted[..end], &quoted[end + 1..])
+            } else {
+                let Some(end) = command.find(' ') else {
+                    return false;
+                };
+                (&command[..end], &command[end..])
+            };
+            remainder.starts_with(' ')
+                && overlay::compare_paths(actual_exe, expected_exe) == std::cmp::Ordering::Equal
+        })
+    }
+    fn scope_targets_executable(
+        target: Option<&str>,
+        legacy_command: Option<&str>,
+        expected_exe: &str,
+    ) -> bool {
+        match target {
+            Some(target) => executable_marker_matches(Some(target), expected_exe),
+            None => legacy_command_matches(legacy_command, expected_exe),
+        }
+    }
+    fn read_value(path: &str, name: &str) -> Option<String> {
+        unsafe {
+            let Ok(key) = open(path, KEY_READ) else {
+                return None;
+            };
+            let value = read(key, name);
+            close(key);
+            value
+        }
+    }
     fn quote(s: &str) -> String {
         if !s.chars().any(char::is_whitespace) && !s.contains('"') {
             return s.into();
@@ -295,11 +340,31 @@ mod win {
                     exe,
                 )?;
             }
+        }
+        let scopes: Vec<_> = SCOPES
+            .iter()
+            .copied()
+            .filter(|scope| exe.is_none_or(|exe| command_targets_executable(scope, exe)))
+            .collect();
+        for scope in scopes {
             let (menu, commands) = menu_paths(scope);
-            delete_owned(&menu, exe)?;
-            delete_owned(&commands, exe)?;
+            // The parent menu has no executable marker. Select the whole scope
+            // using its command-root marker, then delete only MoaVCS-owned keys.
+            delete_owned(&menu, None)?;
+            delete_owned(&commands, None)?;
         }
         Ok(())
+    }
+    fn command_targets_executable(scope: &str, expected_exe: &str) -> bool {
+        let (_, commands) = menu_paths(scope);
+        let target = read_value(&commands, "MoaVcsExecutable");
+        let legacy_command = format!("{commands}\\Shell\\Open\\command");
+        let legacy = if target.is_none() {
+            read_value(&legacy_command, "")
+        } else {
+            None
+        };
+        scope_targets_executable(target.as_deref(), legacy.as_deref(), expected_exe)
     }
     pub fn install_context_menu(settings: &AppSettings) -> Result<()> {
         let exe = app_exe()?;
@@ -405,7 +470,9 @@ mod win {
         Ok(())
     }
     pub fn uninstall_context_menu() -> Result<()> {
-        remove_owned_menus(None)?;
+        let exe = app_exe()?;
+        let exe = exe.to_string_lossy().into_owned();
+        remove_owned_menus(Some(&exe))?;
         unsafe {
             SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
         }
@@ -938,6 +1005,53 @@ mod win {
             a.replace('/', "\\").trim_end_matches('\\'),
             b.replace('/', "\\").trim_end_matches('\\'),
         ) == std::cmp::Ordering::Equal
+    }
+
+    #[cfg(test)]
+    mod ownership_tests {
+        use super::scope_targets_executable;
+
+        #[test]
+        fn executable_marker_is_case_insensitive_and_exact() {
+            assert!(scope_targets_executable(
+                Some(r"C:\Program Files\MoaVcs\moavcs.exe"),
+                None,
+                r"c:\program files\moavcs\MOAVCS.EXE"
+            ));
+            assert!(!scope_targets_executable(
+                Some(r"C:\Program Files\MoaVcs\moavcs-next.exe"),
+                None,
+                r"C:\Program Files\MoaVcs\moavcs.exe"
+            ));
+            assert!(scope_targets_executable(
+                Some(r"C:\Tools\Ütils\moavcs.exe"),
+                None,
+                r"c:\tools\üTILS\MOAVCS.EXE"
+            ));
+        }
+
+        #[test]
+        fn legacy_open_command_fallback_matches_quoted_target_prefix() {
+            assert!(scope_targets_executable(
+                None,
+                Some(r#""C:\Program Files\MoaVcs\moavcs.exe" --shell-path "%1|" --action open"#),
+                r"C:\Program Files\MoaVcs\moavcs.exe"
+            ));
+            assert!(!scope_targets_executable(
+                None,
+                Some(r#""C:\Program Files\MoaVcs\moavcs.exe.extra" --action open"#),
+                r"C:\Program Files\MoaVcs\moavcs.exe"
+            ));
+        }
+
+        #[test]
+        fn present_foreign_marker_does_not_fall_back_to_legacy_command() {
+            assert!(!scope_targets_executable(
+                Some(r"C:\Other\moavcs.exe"),
+                Some(r#""C:\Program Files\MoaVcs\moavcs.exe" --action open"#),
+                r"C:\Program Files\MoaVcs\moavcs.exe"
+            ));
+        }
     }
 }
 
