@@ -11,7 +11,7 @@ using MoaVcs.Core;
 
 namespace MoaVcs.UiSmoke;
 
-internal static class Program
+internal static partial class Program
 {
     private static string? _fixture;
     private static string? _commitFixture;
@@ -32,6 +32,12 @@ internal static class Program
             Directory.CreateDirectory(output);
             var scratch = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, ".local"));
             Directory.CreateDirectory(scratch);
+            if (Environment.GetEnvironmentVariable("MOAVCS_UI_SMOKE_ONLY") == "history-info")
+            {
+                RunHistoryInformationSmoke(scratch, output);
+                app.Shutdown();
+                return 0;
+            }
             if (Environment.GetEnvironmentVariable("MOAVCS_UI_SMOKE_ONLY") == "checkout")
             {
                 RunCheckoutDialogSmoke(scratch, output);
@@ -109,6 +115,7 @@ internal static class Program
             if (((Button)repoWindow.FindName("CancelButton")).Visibility == Visibility.Visible) throw new TimeoutException("History load did not finish.");
             if (((DataGrid)repoWindow.FindName("HistoryGrid")).Items.Count != 1) throw new InvalidOperationException("History view did not load the fixture commit.");
             RunHistoryDetailsSmoke(settings, scratch, output);
+            RunHistoryInformationSmoke(scratch, output);
             RunStartupActionSmoke(settings, _fixture, scratch);
             RunRepositorySidebarSmoke(scratch, output);
             RunCheckoutDialogSmoke(scratch, output);

@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _diffOperation;
     private bool _busy;
     private bool _historyLoaded;
+    private HistoryScope _historyScope = HistoryScope.CurrentBranch;
     private string? _selectedPath;
     private readonly Action<Window>? _showInspection;
     private readonly Func<string, string, bool> _confirmOperation;
@@ -142,6 +143,9 @@ public partial class MainWindow : Window
                 ResetHistoryDetails("저장소의 이력을 불러오는 중…");
                 _provider = provider;
                 _repository = repository;
+                _historyScope = HistoryScope.CurrentBranch;
+                HistoryScopeSelector.SelectedIndex = 0;
+                ResetHistoryOverview(provider);
                 _selectedPath = selectedFile;
                 _historyLoaded = false;
                 HistoryGrid.ItemsSource = null;
@@ -248,12 +252,15 @@ public partial class MainWindow : Window
         UpdateButton.IsEnabled = Can(VcsCapabilities.Update);
         RemoteButton.Visibility = caps.HasFlag(VcsCapabilities.RemoteUrl) ? Visibility.Visible : Visibility.Collapsed;
         RemoteButton.IsEnabled = Can(VcsCapabilities.RemoteUrl);
+        FetchMenuButton.Visibility = caps.HasFlag(VcsCapabilities.Fetch) ? Visibility.Visible : Visibility.Collapsed;
+        FetchMenuButton.IsEnabled = Can(VcsCapabilities.Fetch);
         PushButton.Visibility = caps.HasFlag(VcsCapabilities.Push) ? Visibility.Visible : Visibility.Collapsed;
         PushButton.IsEnabled = Can(VcsCapabilities.Push);
         CommitMessage.IsEnabled = Can(VcsCapabilities.Commit);
         CommitButton.IsEnabled = Can(VcsCapabilities.Commit) && !_changes.Any(c => c.IsConflicted) && !string.IsNullOrWhiteSpace(CommitMessage.Text) &&
             (_provider?.Kind == VcsKind.Svn ? hasSelection : _changes.Any(c => c.IsStaged));
         HistoryTab.IsEnabled = caps.HasFlag(VcsCapabilities.History);
+        HistoryScopeSelector.IsEnabled = !_busy && _provider?.Kind == VcsKind.Git;
         StagedDiffCheck.Visibility = _provider?.Kind == VcsKind.Git ? Visibility.Visible : Visibility.Collapsed;
         RefreshButton.IsEnabled = !_busy;
         ProviderMenu.IsEnabled = !_busy && _repository is not null;
@@ -499,10 +506,13 @@ public partial class MainWindow : Window
         ResetHistoryDetails("커밋을 선택하면 변경 파일과 내용을 볼 수 있습니다.");
         var provider = _provider;
         var root = _repository.RootPath;
-        var entries = await provider.GetHistoryAsync(root, token);
+        var scope = provider.Kind == VcsKind.Git ? _historyScope : HistoryScope.CurrentBranch;
+        var snapshot = await provider.GetHistorySnapshotAsync(root, scope, token);
         if (!ReferenceEquals(_provider, provider) || !string.Equals(_repository?.RootPath, root, StringComparison.OrdinalIgnoreCase)) return;
+        UpdateHistoryOverview(snapshot);
+        var entries = snapshot.Entries;
         HistoryGrid.ItemsSource = entries;
-        HistoryHint.Text = entries.Count == 0 ? "아직 커밋 이력이 없습니다." : $"최근 {entries.Count}개 기록";
+        HistoryHint.Text = BuildHistoryHint(snapshot);
         _historyLoaded = true;
         _settingHistorySelection = true;
         HistoryGrid.SelectedItem = entries.FirstOrDefault();
@@ -520,6 +530,7 @@ public partial class MainWindow : Window
             VcsOperation.Commit => VcsCapabilities.Commit,
             VcsOperation.Update => VcsCapabilities.Update,
             VcsOperation.Push => VcsCapabilities.Push,
+            VcsOperation.Fetch => VcsCapabilities.Fetch,
             _ => VcsCapabilities.None
         };
         if (required == VcsCapabilities.None || !_provider.Capabilities.HasFlag(required))
@@ -547,7 +558,8 @@ public partial class MainWindow : Window
         var label = operation switch
         {
             VcsOperation.Stage => "선택한 변경 등록", VcsOperation.Unstage => "선택한 스테이지 해제",
-            VcsOperation.Commit => "커밋", VcsOperation.Update => "원격 변경 가져오기", VcsOperation.Push => "원격 저장소에 보내기", _ => operation.ToString()
+            VcsOperation.Commit => "커밋", VcsOperation.Update => "원격 변경 가져오기", VcsOperation.Push => "원격 저장소에 보내기",
+            VcsOperation.Fetch => "원격 추적 정보 가져오기", _ => operation.ToString()
         };
         if (operation is VcsOperation.Commit or VcsOperation.Update or VcsOperation.Push)
         {
@@ -565,12 +577,17 @@ public partial class MainWindow : Window
             Log(label + (_provider.Kind == VcsKind.Svn || operation is VcsOperation.Stage or VcsOperation.Unstage ? $" ({selected.Length}개 파일)" : ""));
             var requestPaths = operation is VcsOperation.Stage or VcsOperation.Unstage or VcsOperation.Commit ? selected : null;
             var result = (await _provider.ExecuteAsync(new VcsRequest(operation, _repository.RootPath, requestPaths, message), token)).EnsureSuccess();
-            if (operation == VcsOperation.Push) NoticePanel.Visibility = Visibility.Collapsed;
+            if (operation is VcsOperation.Push or VcsOperation.Fetch) NoticePanel.Visibility = Visibility.Collapsed;
             Log(string.IsNullOrWhiteSpace(result.Output) ? "완료" : result.Output);
             if (operation == VcsOperation.Commit) CommitMessage.Clear();
+            if (operation == VcsOperation.Fetch)
+            {
+                _repository = await _provider.GetRepositoryAsync(_repository.RootPath, token);
+                SetRepositoryHeader();
+            }
             ApplyChanges(await _provider.GetStatusAsync(_repository.RootPath, token));
             _historyLoaded = false;
-            if (MainTabs.SelectedItem == HistoryTab) await LoadHistoryAsync(token);
+            if (operation == VcsOperation.Fetch || MainTabs.SelectedItem == HistoryTab) await LoadHistoryAsync(token);
         });
         await LoadDiffAsync();
     }
@@ -596,6 +613,17 @@ public partial class MainWindow : Window
     private async void Commit_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(VcsOperation.Commit);
     private async void Update_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(VcsOperation.Update);
     private async void Push_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(VcsOperation.Push);
+    private async void Fetch_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(VcsOperation.Fetch);
+    private async void HistoryScope_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.Source, HistoryScopeSelector) || !IsInitialized || _busy || _provider?.Kind != VcsKind.Git ||
+            HistoryScopeSelector.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
+        var requested = tag == nameof(HistoryScope.AllBranches) ? HistoryScope.AllBranches : HistoryScope.CurrentBranch;
+        if (_historyScope == requested) return;
+        _historyScope = requested;
+        _historyLoaded = false;
+        await RunBusyAsync("커밋 이력 범위를 바꾸는 중…", LoadHistoryAsync);
+    }
     private async void Remote_Click(object sender, RoutedEventArgs e) => await EditRemoteUrlAsync();
 
     private async Task EditRemoteUrlAsync()
