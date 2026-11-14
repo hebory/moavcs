@@ -202,8 +202,8 @@ public static class RemoteTests
             var args = command.Arguments;
             if (args.SequenceEqual(["rev-parse", "--show-toplevel"]))
                 return Result(0, root);
-            if (args.SequenceEqual(["symbolic-ref", "--short", "-q", "HEAD"]))
-                return Result(0, "main");
+            if (args.SequenceEqual(["symbolic-ref", "-q", "HEAD"]))
+                return Result(0, "refs/heads/main");
             if (args.Count >= 2 && args[0] == "config" && args[^2] == "--get-all" && args[^1] == "remote.origin.url")
                 return Result(0, "local\0file:.git/config\0https://query.invalid/repo.git\0");
             if (args.Count >= 2 && args[0] == "config" && args[^2] == "--get-all" && args[^1] == "remote.origin.pushurl")

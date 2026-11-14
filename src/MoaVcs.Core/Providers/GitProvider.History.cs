@@ -13,15 +13,22 @@ public sealed partial class GitProvider
         var commit = await ResolveHistoryCommitAsync(root, revision, cancellationToken).ConfigureAwait(false);
         var relationship = await ReadHistoryRelationshipAsync(root, commit, cancellationToken).ConfigureAwait(false);
 
-        const string format = "--format=%H%x00%an%x00%aI%x00%B%x00";
+        const string format = "--format=%H%x00%an%x00%aI%x00%B%x00%ae%x00%cn%x00%ce%x00%cI%x00%P%x00";
         var metadata = (await Run(root, ["show", "-s", format, commit], cancellationToken).ConfigureAwait(false))
             .EnsureSuccess().StandardOutput;
         var fields = metadata.Split('\0');
-        if (fields.Length < 4 || !fields[0].TrimStart('\r', '\n').Equals(commit, StringComparison.OrdinalIgnoreCase))
+        if (fields.Length < 9 || !fields[0].TrimStart('\r', '\n').Equals(commit, StringComparison.OrdinalIgnoreCase))
             throw new VcsException("Git 커밋 세부 정보를 읽을 수 없습니다.");
 
         var message = fields[3].TrimEnd('\r', '\n');
-        var entry = new HistoryEntry(commit, fields[1], fields[2], message);
+        var entry = new HistoryEntry(commit, fields[1], fields[2], message)
+        {
+            AuthorEmail = fields[4].TrimEnd('\r', '\n'),
+            Committer = fields[5].TrimEnd('\r', '\n'),
+            CommitterEmail = fields[6].TrimEnd('\r', '\n'),
+            CommitDate = fields[7].TrimEnd('\r', '\n'),
+            ParentIds = fields[8].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+        };
         var files = await ReadHistoryFilesAsync(root, relationship, commit, cancellationToken).ConfigureAwait(false);
         return new HistoryDetails(entry, files, relationship.Label);
     }

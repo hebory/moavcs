@@ -15,7 +15,7 @@ public sealed partial class GitProvider(ICommandRunner runner, string executable
     public VcsCapabilities Capabilities => VcsCapabilities.Diff | VcsCapabilities.History | VcsCapabilities.Stage |
         VcsCapabilities.Unstage | VcsCapabilities.Commit | VcsCapabilities.Update | VcsCapabilities.Push |
         VcsCapabilities.Initialize | VcsCapabilities.Clone | VcsCapabilities.FileComparison | VcsCapabilities.Blame |
-        VcsCapabilities.RemoteUrl | VcsCapabilities.ConflictResolution;
+        VcsCapabilities.RemoteUrl | VcsCapabilities.ConflictResolution | VcsCapabilities.Fetch;
 
     public async Task<RemoteInfo> GetRemoteAsync(string root, CancellationToken cancellationToken = default)
     {
@@ -99,9 +99,10 @@ public sealed partial class GitProvider(ICommandRunner runner, string executable
         if (!rootResult.Success)
             throw new VcsException("이 폴더 또는 상위 폴더에서 Git 저장소를 찾을 수 없습니다. 기존 저장소를 열거나 새 저장소를 초기화하세요.");
         var root = Path.GetFullPath(rootResult.StandardOutput.Trim());
-        var branchResult = await Run(root, ["symbolic-ref", "--short", "-q", "HEAD"], cancellationToken).ConfigureAwait(false);
+        var branchResult = await Run(root, ["symbolic-ref", "-q", "HEAD"], cancellationToken).ConfigureAwait(false);
         var branch = branchResult.Success && !string.IsNullOrWhiteSpace(branchResult.StandardOutput)
             ? branchResult.StandardOutput.Trim() : await GetShortHeadAsync(root, cancellationToken).ConfigureAwait(false);
+        if (branch.StartsWith("refs/heads/", StringComparison.Ordinal)) branch = branch["refs/heads/".Length..];
         return new RepositoryInfo(Kind, root, string.IsNullOrEmpty(branch) ? "(no commits yet)" : branch);
     }
 
@@ -310,6 +311,9 @@ public sealed partial class GitProvider(ICommandRunner runner, string executable
             case VcsOperation.Update:
                 var updateRoot = await RequireRepositoryRootAsync(working, cancellationToken).ConfigureAwait(false);
                 return (await Run(updateRoot, ["pull", "--ff-only"], cancellationToken).ConfigureAwait(false)).EnsureSuccess();
+            case VcsOperation.Fetch:
+                var fetchRoot = await RequireRepositoryRootAsync(working, cancellationToken).ConfigureAwait(false);
+                return (await Run(fetchRoot, ["fetch", "--all"], cancellationToken).ConfigureAwait(false)).EnsureSuccess();
             case VcsOperation.Push:
                 var pushRoot = await RequireRepositoryRootAsync(working, cancellationToken).ConfigureAwait(false);
                 return (await Run(pushRoot, ["-c", "push.autoSetupRemote=true", "push"], cancellationToken).ConfigureAwait(false)).EnsureSuccess();

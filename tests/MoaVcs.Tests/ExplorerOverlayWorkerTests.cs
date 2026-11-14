@@ -200,8 +200,8 @@ internal static class ExplorerOverlayWorkerTests
             cancellationToken.ThrowIfCancellationRequested();
             if (command.Arguments.SequenceEqual(["rev-parse", "--show-toplevel"]))
                 return Task.FromResult(new CommandResult(0, Path.GetFullPath(command.WorkingDirectory), ""));
-            if (command.Arguments.SequenceEqual(["symbolic-ref", "--short", "-q", "HEAD"]))
-                return Task.FromResult(new CommandResult(0, "main", ""));
+            if (command.Arguments.SequenceEqual(["symbolic-ref", "-q", "HEAD"]))
+                return Task.FromResult(new CommandResult(0, "refs/heads/main", ""));
             if (command.Arguments.Contains("status", StringComparer.Ordinal))
             {
                 if (FailStatus) return Task.FromResult(new CommandResult(1, "", "fixture status failure"));

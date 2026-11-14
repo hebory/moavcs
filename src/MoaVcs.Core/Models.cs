@@ -7,10 +7,10 @@ public enum VcsCapabilities
 {
     None = 0, Diff = 1, History = 2, Stage = 4, Unstage = 8,
     Commit = 16, Update = 32, Push = 64, Initialize = 128, Clone = 256,
-    Blame = 512, FileComparison = 1024, RemoteUrl = 2048, ConflictResolution = 4096
+    Blame = 512, FileComparison = 1024, RemoteUrl = 2048, ConflictResolution = 4096, Fetch = 8192
 }
 
-public enum VcsOperation { Stage, Unstage, Commit, Update, Push, Initialize, Clone }
+public enum VcsOperation { Stage, Unstage, Commit, Update, Push, Initialize, Clone, Fetch }
 
 public sealed record RepositoryInfo(VcsKind Kind, string RootPath, string Branch, string Summary = "");
 
@@ -24,7 +24,39 @@ public sealed record FileChange(string Path, string Status, string IndexStatus =
 public sealed record HistoryEntry(string Id, string Author, string Date, string Message)
 {
     public string Summary => Message.IndexOfAny(['\r', '\n']) is var end && end >= 0 ? Message[..end] : Message;
+    public IReadOnlyList<string> ParentIds { get; init; } = [];
+    public IReadOnlyList<HistoryReference> References { get; init; } = [];
+    public HistoryRelation Relation { get; init; }
+    public string AuthorEmail { get; init; } = "";
+    public string Committer { get; init; } = "";
+    public string CommitterEmail { get; init; } = "";
+    public string CommitDate { get; init; } = "";
 }
+
+public enum HistoryScope { CurrentBranch, AllBranches }
+public enum HistoryReferenceKind { Head, LocalBranch, RemoteBranch, Tag }
+public enum HistoryRelation { Unknown, LocalOnly, UpstreamOnly, Shared, Other }
+public sealed record HistoryReference(string Name, HistoryReferenceKind Kind);
+
+// All remote values describe locally stored tracking refs, never a live server query.
+public sealed record GitHistoryContext
+{
+    public string CurrentBranch { get; init; } = "";
+    public string HeadId { get; init; } = "";
+    public bool IsDetached { get; init; }
+    public bool IsUnborn { get; init; }
+    public string Upstream { get; init; } = "";
+    public string UpstreamId { get; init; } = "";
+    public string PushTarget { get; init; } = "";
+    public string PushTargetId { get; init; } = "";
+    public int? Ahead { get; init; }
+    public int? Behind { get; init; }
+    public bool IsShallow { get; init; }
+    public string Status { get; init; } = "";
+}
+
+public sealed record HistorySnapshot(IReadOnlyList<HistoryEntry> Entries, string ScopeLabel,
+    GitHistoryContext? Git = null, bool IsTruncated = false);
 
 public sealed record HistoryDetails(HistoryEntry Entry, IReadOnlyList<FileChange> Files, string ComparisonLabel);
 
@@ -84,6 +116,15 @@ public interface IVcsProvider
     Task SetRemoteUrlAsync(string root, string url, RemoteInfo expected, CancellationToken cancellationToken = default) =>
         throw new VcsException($"{Name}에서는 아직 원격 주소 변경을 지원하지 않습니다.");
     Task<IReadOnlyList<HistoryEntry>> GetHistoryAsync(string root, CancellationToken cancellationToken = default);
+    async Task<HistorySnapshot> GetHistorySnapshotAsync(string root, HistoryScope scope = HistoryScope.CurrentBranch,
+        CancellationToken cancellationToken = default) =>
+        new(await GetHistoryAsync(root, cancellationToken).ConfigureAwait(false), Kind switch
+        {
+            VcsKind.Svn => "현재 SVN 작업 사본 경로의 서버 리비전 이력",
+            VcsKind.Perforce => "현재 Perforce 작업 공간 경로의 제출된 변경 목록",
+            VcsKind.Lore => "현재 Lore 브랜치의 로컬 이력 · 원격 동기화 상태는 제공되지 않습니다.",
+            _ => "현재 저장소 이력"
+        });
     Task<HistoryDetails> GetHistoryDetailsAsync(string root, string revision, CancellationToken cancellationToken = default) =>
         throw new VcsException($"{Name}에서는 아직 커밋 상세 보기를 지원하지 않습니다.");
     Task<string> GetHistoryDiffAsync(string root, string revision, FileChange? file = null, CancellationToken cancellationToken = default) =>
