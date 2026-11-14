@@ -680,7 +680,9 @@ public partial class MainWindow : Window
     private async void Create_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        var dialog = new CreateRepositoryWindow(CreateProvider);
+        var initialDirectory = _repository?.RootPath ?? GetLaunchDirectoryOrCurrent();
+        var initialVcs = _repository?.Kind ?? _launchOptions.Vcs;
+        var dialog = new CreateRepositoryWindow(CreateProvider, initialDirectory, initialVcs: initialVcs);
         if (_showDialog(dialog) != true) return;
         await CreateRepositoryAsync(dialog);
     }
@@ -689,17 +691,26 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         var actionPath = Path.GetFullPath(_launchOptions.Path ?? Environment.CurrentDirectory);
-        var directory = File.Exists(actionPath)
-            ? Path.GetDirectoryName(actionPath)!
-            : actionPath;
         var operation = _launchOptions.Action == "init" ? VcsOperation.Initialize : VcsOperation.Clone;
-        var initialDirectory = operation == VcsOperation.Initialize || Directory.Exists(directory)
-            ? directory
-            : Path.GetDirectoryName(directory) ?? Environment.CurrentDirectory;
+        var directory = operation == VcsOperation.Initialize
+            ? (File.Exists(actionPath) ? Path.GetDirectoryName(actionPath)! : actionPath)
+            : Directory.Exists(actionPath) ? actionPath :
+                File.Exists(actionPath) ? Path.GetDirectoryName(actionPath)! : GetLaunchDirectoryOrCurrent();
         var kind = _launchOptions.Vcs ?? VcsKind.Git;
-        var dialog = new CreateRepositoryWindow(CreateProvider, initialDirectory, operation, kind);
+        var dialog = new CreateRepositoryWindow(CreateProvider, directory, operation, kind);
         if (_showDialog(dialog) != true) return;
         await CreateRepositoryAsync(dialog);
+    }
+
+    private string GetLaunchDirectoryOrCurrent()
+    {
+        if (!string.IsNullOrWhiteSpace(_launchOptions.Path))
+        {
+            var launchPath = Path.GetFullPath(_launchOptions.Path);
+            if (Directory.Exists(launchPath)) return launchPath;
+            if (File.Exists(launchPath)) return Path.GetDirectoryName(launchPath)!;
+        }
+        return Environment.CurrentDirectory;
     }
 
     private async Task CreateRepositoryAsync(CreateRepositoryWindow dialog)

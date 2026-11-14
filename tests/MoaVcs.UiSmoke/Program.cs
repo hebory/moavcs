@@ -32,6 +32,12 @@ internal static class Program
             Directory.CreateDirectory(output);
             var scratch = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, ".local"));
             Directory.CreateDirectory(scratch);
+            if (Environment.GetEnvironmentVariable("MOAVCS_UI_SMOKE_ONLY") == "checkout")
+            {
+                RunCheckoutDialogSmoke(scratch, output);
+                app.Shutdown();
+                return 0;
+            }
             _fixture = Path.Combine(scratch, "ui-fixture-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_fixture);
             Git("init"); Git("config", "user.name", "MoaVCS UI test"); Git("config", "user.email", "test@example.invalid");
@@ -98,6 +104,7 @@ internal static class Program
             if (((DataGrid)repoWindow.FindName("HistoryGrid")).Items.Count != 1) throw new InvalidOperationException("History view did not load the fixture commit.");
             RunHistoryDetailsSmoke(settings, scratch, output);
             RunStartupActionSmoke(settings, _fixture, scratch);
+            RunCheckoutDialogSmoke(scratch, output);
             RunCancelledOperationSmoke(settings, _fixture);
             RunCommitStagingSmoke(settings, scratch);
             RunConflictResolutionSmoke(settings, scratch, output);
@@ -363,6 +370,105 @@ internal static class Program
         Console.WriteLine($"PASS: Lore CLI {RunLore(loreExecutable, _loreFixture, "--version").Trim()} compare and blame smoke; {output}");
     }
 
+    private static void RunCheckoutDialogSmoke(string scratch, string output)
+    {
+        var root = Path.Combine(scratch, "ui-checkout-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var settingsFile = Path.Combine(root, "settings.json");
+        MainWindow? cloneHost = null;
+        try
+        {
+            IVcsProvider Provider(VcsKind kind) => kind switch
+            {
+                VcsKind.Git => new MoaVcs.Core.Providers.GitProvider(new ProcessCommandRunner()),
+                VcsKind.Svn => new MoaVcs.Core.Providers.SvnProvider(),
+                VcsKind.Lore => new MoaVcs.Core.Providers.LoreProvider(),
+                _ => new MoaVcs.Core.Providers.PerforceProvider()
+            };
+            TextBox Field(CreateRepositoryWindow window, string name) => (TextBox)window.FindName(name);
+            void EqualPath(string expected, string actual, string reason)
+            {
+                if (!Path.GetFullPath(expected).Equals(Path.GetFullPath(actual), StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(reason + $" Expected={expected}; actual={actual}");
+            }
+
+            var selectedParent = Path.Combine(root, "선택한 상위 폴더");
+            Directory.CreateDirectory(selectedParent);
+            string? pickerInitial = null;
+            var dialog = new CreateRepositoryWindow(Provider, root, VcsOperation.Clone, VcsKind.Git,
+                pickFolder: (_, initial) => { pickerInitial = initial; return selectedParent; });
+            EqualPath(root, dialog.ParentDirectoryPath, "Explorer folder must be prefilled.");
+            var remote = Field(dialog, "CloneRemoteUrl");
+            var folder = Field(dialog, "CloneFolderName");
+            remote.Text = "https://example.invalid/team/moavcs.git";
+            EqualPath(Path.Combine(root, "moavcs"), dialog.DestinationPath, "Remote name must form a child folder.");
+            remote.Text = "git@example.invalid:team/새 프로젝트.git";
+            EqualPath(Path.Combine(root, "새 프로젝트"), dialog.DestinationPath, "Remote changes must update an automatic folder name.");
+            ((Button)dialog.FindName("CreateBrowseButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            EqualPath(root, pickerInitial!, "Folder picker must start in the current parent.");
+            EqualPath(Path.Combine(selectedParent, "새 프로젝트"), dialog.DestinationPath, "Browsing must preserve the proposed repository child.");
+            folder.Text = "내 작업 폴더";
+            remote.Text = "https://example.invalid/team/another.git";
+            EqualPath(Path.Combine(selectedParent, "내 작업 폴더"), dialog.DestinationPath, "Explicit folder names must survive remote changes.");
+            Field(dialog, "CloneParentPath").Text = root;
+            EqualPath(Path.Combine(root, "내 작업 폴더"), dialog.DestinationPath, "Typed parent changes must update the final preview.");
+            folder.Text = "";
+            remote.Text = "https://example.invalid/team/restored.git";
+            EqualPath(Path.Combine(root, "restored"), dialog.DestinationPath, "Clearing a custom name must allow a new automatic proposal.");
+            var mode = (ComboBox)dialog.FindName("CreateModePicker");
+            mode.SelectedIndex = 0;
+            EqualPath(root, dialog.DestinationPath, "Initialize must target the selected folder itself.");
+            if (remote.IsEnabled) throw new InvalidOperationException("Initialize must disable remote input.");
+            mode.SelectedIndex = 1;
+            EqualPath(Path.Combine(root, "restored"), dialog.DestinationPath, "Returning to clone must restore its child-folder proposal.");
+            Render(dialog, Path.Combine(output, "create-checkout.png"));
+            dialog.Close();
+
+            var svn = new CreateRepositoryWindow(Provider, root, VcsOperation.Clone, VcsKind.Svn);
+            Field(svn, "CloneRemoteUrl").Text = "https://example.invalid/svn/project/trunk/";
+            EqualPath(Path.Combine(root, "trunk"), svn.DestinationPath, "SVN checkout must use the URL path name.");
+            Render(svn, Path.Combine(output, "create-checkout-svn.png"));
+            svn.Close();
+
+            var source = Path.Combine(root, "원격 원본.git");
+            Directory.CreateDirectory(source);
+            GitAt(source, "init", "--initial-branch=main");
+            GitAt(source, "config", "user.name", "MoaVCS checkout test");
+            GitAt(source, "config", "user.email", "checkout-test@example.invalid");
+            File.WriteAllText(Path.Combine(source, "committed.txt"), "local clone content\n");
+            GitAt(source, "add", "committed.txt");
+            GitAt(source, "commit", "-m", "체크아웃 검증 기준 커밋");
+            // The clicked directory may already contain files. Only its new child must be empty.
+            File.WriteAllText(Path.Combine(selectedParent, "keep.txt"), "existing parent content");
+            var settings = new SettingsStore(settingsFile);
+            settings.Save(new AppSettings());
+            cloneHost = new MainWindow(new LaunchOptions(selectedParent, "clone", VcsKind.Git), settings,
+                showDialog: window =>
+                {
+                    var create = (CreateRepositoryWindow)window;
+                    Field(create, "CloneRemoteUrl").Text = source;
+                    EqualPath(Path.Combine(selectedParent, "원격 원본"), create.DestinationPath, "Explorer clone must combine the clicked parent and source repository name.");
+                    create.Dispatcher.BeginInvoke(new Action(() =>
+                        ((Button)create.FindName("CreateRepositoryButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent))));
+                    return create.ShowDialog();
+                });
+            cloneHost.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            WaitUntilRepositoryReady(cloneHost, TimeSpan.FromSeconds(30), "Explorer local clone did not open its destination.");
+            var destination = Path.Combine(selectedParent, "원격 원본");
+            EqualPath(destination, ((TextBlock)cloneHost.FindName("RepoPath")).Text, "Successful clone must open its proposed final folder.");
+            if (File.ReadAllText(Path.Combine(destination, "committed.txt")).Replace("\r\n", "\n") != "local clone content\n" ||
+                File.ReadAllText(Path.Combine(selectedParent, "keep.txt")) != "existing parent content" ||
+                GitAtOutput(destination, "rev-parse", "HEAD").Trim() != GitAtOutput(source, "rev-parse", "HEAD").Trim())
+                throw new InvalidOperationException("Local clone must preserve the parent and source commit.");
+            Console.WriteLine("PASS: checkout parent context, automatic/custom repository folder names, browse, mode changes and actual local Git clone");
+        }
+        finally
+        {
+            cloneHost?.Close();
+            DeleteSmokePath(root);
+        }
+    }
+
     private static void RunStartupActionSmoke(SettingsStore settings, string fixture, string scratch)
     {
         var parsed = new[] { "update", "push", "clone", "init", "settings" }
@@ -378,9 +484,9 @@ internal static class Program
         Pump();
         var cloneNotice = ((TextBlock)cloneWindow.FindName("NoticeText")).Text;
         if (shown is not CreateRepositoryWindow clone || clone.SelectedOperation != MoaVcs.Core.VcsOperation.Clone ||
-            clone.DestinationPath.Length != 0 || clone.Request is not null ||
+            !Path.GetFullPath(clone.ParentDirectoryPath).Equals(Path.GetFullPath(fixture), StringComparison.OrdinalIgnoreCase) || clone.Request is not null ||
             ((Grid)cloneWindow.FindName("RepositoryPanel")).Visibility != Visibility.Collapsed)
-            throw new InvalidOperationException($"Explorer clone should open a blank-destination dialog without opening or modifying the clicked repository. Dialog={shown?.GetType().Name ?? "<none>"}; notice={cloneNotice}");
+            throw new InvalidOperationException($"Explorer clone should prefill the clicked parent folder without opening or modifying that repository. Dialog={shown?.GetType().Name ?? "<none>"}; notice={cloneNotice}");
 
         var initPath = Path.Combine(scratch, "ui-action-init-" + Guid.NewGuid().ToString("N"));
         shown = null;

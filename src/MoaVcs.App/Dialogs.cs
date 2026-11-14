@@ -53,58 +53,128 @@ public sealed class CreateRepositoryWindow : Window
     private readonly Func<VcsKind, IVcsProvider> _providers;
     private readonly string? _initialDirectory;
     private readonly VcsOperation? _initialOperation;
-    private readonly ComboBox _providerPicker = new() { ItemsSource = ProviderChoice.All };
-    private readonly ComboBox _modePicker = new();
-    private readonly TextBox _remote = new();
-    private readonly TextBox _destination = new();
+    private readonly ComboBox _providerPicker = new() { Name = "CreateVcsPicker", ItemsSource = ProviderChoice.All };
+    private readonly ComboBox _modePicker = new() { Name = "CreateModePicker" };
+    private readonly TextBox _remote = new() { Name = "CloneRemoteUrl" };
+    private readonly TextBox _destination = new() { Name = "CloneParentPath" };
+    private readonly TextBox _cloneFolderName = new() { Name = "CloneFolderName" };
+    private readonly TextBlock _destinationPreview = new() { Name = "CloneDestinationPreview", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 7, 0, 0) };
+    private readonly TextBlock _cloneFolderNameLabel = new() { Text = "저장소 폴더 이름", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 13, 0, 7) };
+    private readonly TextBlock _destinationPreviewLabel = new() { Text = "최종 저장 경로", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 13, 0, 4) };
+    private readonly TextBlock _pathHelp = new() { Text = "복제/체크아웃은 상위 폴더와 저장소 폴더 이름으로 최종 경로를 만듭니다. 대상 폴더는 없거나 비어 있어야 합니다.", FontSize = 11, Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 7, 0, 0) };
     private readonly TextBlock _error = new() { Foreground = Brushes.Firebrick, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 14, 0, 0) };
     private readonly TextBlock _remoteLabel = new() { Text = "원격 저장소 주소", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 18, 0, 7) };
     private readonly Button _create;
+    private readonly Func<Window, string?, string?> _pickFolder;
+    private bool _folderNameWasEdited;
+    private bool _updatingFolderName;
     public VcsRequest? Request { get; private set; }
     public VcsKind SelectedKind => ((ProviderChoice)_providerPicker.SelectedItem).Kind;
     public VcsOperation? SelectedOperation => (_modePicker.SelectedItem as ModeChoice)?.Operation;
-    public string DestinationPath => _destination.Text;
+    public TextBox CloneParentPath => _destination;
+    public TextBox CloneFolderName => _cloneFolderName;
+    public TextBox CloneRemoteUrl => _remote;
+    public string ParentDirectoryPath => _destination.Text;
+    public string DestinationPath
+    {
+        get
+        {
+            if (SelectedOperation != VcsOperation.Clone) return _destination.Text;
+            if (string.IsNullOrWhiteSpace(_destination.Text) || string.IsNullOrWhiteSpace(_cloneFolderName.Text)) return _destination.Text;
+            try { return CheckoutPath.GetDestination(_destination.Text.Trim(), _cloneFolderName.Text.Trim()); }
+            catch { return _destination.Text; }
+        }
+    }
 
     public CreateRepositoryWindow(Func<VcsKind, IVcsProvider> providers, string? initialDirectory = null,
-        VcsOperation? initialOperation = null, VcsKind? initialVcs = null)
+        VcsOperation? initialOperation = null, VcsKind? initialVcs = null,
+        Func<Window, string?, string?>? pickFolder = null)
     {
         _providers = providers;
         _initialDirectory = string.IsNullOrWhiteSpace(initialDirectory) ? null : Path.GetFullPath(initialDirectory);
         _initialOperation = initialOperation;
-        Width = 620; Height = 610;
-        var panel = DialogLayout.Create(this, "새 작업 공간", "새 로컬 저장소를 만들거나 원격 저장소를 복제합니다. 인증은 해당 CLI의 기존 설정을 사용합니다.");
+        _pickFolder = pickFolder ?? ((owner, start) =>
+        {
+            var picker = new OpenFolderDialog { Title = SelectedOperation == VcsOperation.Clone ? "저장할 상위 폴더 선택" : "저장소 폴더 선택" };
+            if (start is not null && Directory.Exists(start)) picker.InitialDirectory = start;
+            return picker.ShowDialog(owner) == true ? picker.FolderName : null;
+        });
+        Width = 620; Height = 720;
+        var panel = DialogLayout.Create(this, "새 작업 공간", "원격 저장소를 복제하거나 새 로컬 저장소를 만듭니다.");
+        foreach (var field in new[] { _remote, _destination, _cloneFolderName }) field.Padding = new Thickness(9, 5, 9, 5);
         DialogLayout.Label(panel, "버전 관리 시스템");
         panel.Children.Add(_providerPicker);
         DialogLayout.Label(panel, "시작 방법");
         panel.Children.Add(_modePicker);
         panel.Children.Add(_remoteLabel);
         panel.Children.Add(_remote);
-        DialogLayout.Label(panel, "로컬 폴더 경로");
+        var pathLabel = new TextBlock { Text = "저장할 위치 (상위 폴더)", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 13, 0, 7) };
+        panel.Children.Add(pathLabel);
         var pathRow = new DockPanel();
         var browse = DialogLayout.Button("찾아보기", (_, _) =>
         {
-            var picker = new OpenFolderDialog { Title = "대상 폴더 선택" };
-            if (_initialDirectory is not null && Directory.Exists(_initialDirectory)) picker.InitialDirectory = _initialDirectory;
-            if (picker.ShowDialog(this) == true) _destination.Text = picker.FolderName;
+            var start = Path.IsPathFullyQualified(_destination.Text) && Directory.Exists(_destination.Text) ? _destination.Text : _initialDirectory;
+            var selected = _pickFolder(this, start);
+            if (!string.IsNullOrWhiteSpace(selected)) _destination.Text = Path.GetFullPath(selected);
         });
+        browse.Name = "CreateBrowseButton";
         browse.Margin = new Thickness(10, 0, 0, 0);
         DockPanel.SetDock(browse, Dock.Right); pathRow.Children.Add(browse); pathRow.Children.Add(_destination); panel.Children.Add(pathRow);
-        panel.Children.Add(new TextBlock { Text = "복제할 때는 존재하지 않는 폴더 또는 빈 폴더를 지정하세요.", FontSize = 11, Foreground = Brushes.SlateGray, Margin = new Thickness(0, 7, 0, 0) });
-        panel.Children.Add(_error);
+        panel.Children.Add(_cloneFolderNameLabel);
+        panel.Children.Add(_cloneFolderName);
+        panel.Children.Add(_destinationPreviewLabel);
+        panel.Children.Add(_destinationPreview);
+        panel.Children.Add(_pathHelp);
         _create = DialogLayout.Button("작업 공간 만들기", Create_Click, true);
-        panel.Children.Add(_create);
+        var form = (ScrollViewer)Content;
+        Content = null;
+        var footer = new StackPanel { Margin = new Thickness(28, 0, 28, 20) };
+        footer.Children.Add(_error);
+        footer.Children.Add(_create);
+        var layout = new DockPanel();
+        DockPanel.SetDock(footer, Dock.Bottom);
+        layout.Children.Add(footer);
+        layout.Children.Add(form);
+        Content = layout;
+        _create.Name = "CreateRepositoryButton";
+        NameScope.SetNameScope(this, new NameScope());
+        RegisterName(_providerPicker.Name, _providerPicker);
+        RegisterName(_modePicker.Name, _modePicker);
+        RegisterName(_remote.Name, _remote);
+        RegisterName(_destination.Name, _destination);
+        RegisterName(_cloneFolderName.Name, _cloneFolderName);
+        RegisterName(browse.Name, browse);
+        RegisterName(_create.Name, _create);
+        RegisterName(_destinationPreview.Name, _destinationPreview);
         _providerPicker.SelectionChanged += (_, _) => UpdateModes();
+        _remote.TextChanged += (_, _) => UpdateSuggestedFolderName();
+        _cloneFolderName.TextChanged += (_, _) =>
+        {
+            if (!_updatingFolderName)
+                _folderNameWasEdited = !string.IsNullOrWhiteSpace(_cloneFolderName.Text);
+            UpdateDestinationPreview();
+        };
+        _destination.TextChanged += (_, _) => UpdateDestinationPreview();
         _modePicker.SelectionChanged += (_, _) =>
         {
             var clone = _modePicker.SelectedItem is ModeChoice { Operation: VcsOperation.Clone };
             _remote.IsEnabled = clone;
             _remoteLabel.Opacity = clone ? 1 : 0.4;
+            _cloneFolderNameLabel.Visibility = clone ? Visibility.Visible : Visibility.Collapsed;
+            _cloneFolderName.Visibility = clone ? Visibility.Visible : Visibility.Collapsed;
+            _destinationPreviewLabel.Visibility = clone ? Visibility.Visible : Visibility.Collapsed;
+            _destinationPreview.Visibility = clone ? Visibility.Visible : Visibility.Collapsed;
+            pathLabel.Text = clone ? "저장할 위치 (상위 폴더)" : "로컬 저장소 폴더 경로";
+            _pathHelp.Text = clone
+                ? "복제/체크아웃은 상위 폴더와 저장소 폴더 이름으로 최종 경로를 만듭니다. 대상 폴더는 없거나 비어 있어야 합니다."
+                : "선택한 폴더에 새 로컬 저장소를 만듭니다.";
+            UpdateDestinationPreview();
         };
         _providerPicker.SelectedItem = initialVcs is { } kind
             ? ProviderChoice.All.FirstOrDefault(choice => choice.Kind == kind) ?? ProviderChoice.All[0]
             : ProviderChoice.All[0];
-        if (initialOperation == VcsOperation.Initialize && _initialDirectory is not null)
-            _destination.Text = _initialDirectory;
+        if (_initialDirectory is not null) _destination.Text = _initialDirectory;
+        UpdateDestinationPreview();
     }
 
     private void UpdateModes()
@@ -121,6 +191,30 @@ public sealed class CreateRepositoryWindow : Window
         _modePicker.SelectedIndex = choices.Count == 0 ? -1 : selectedIndex >= 0 ? selectedIndex : 0;
         _create.IsEnabled = choices.Count > 0;
         _error.Text = choices.Count == 0 ? "Perforce 클라이언트 작업 공간을 P4V 또는 p4 CLI에서 설정한 뒤 ‘폴더 열기’로 연결하세요." : "";
+        UpdateSuggestedFolderName();
+        UpdateDestinationPreview();
+    }
+
+    private void UpdateSuggestedFolderName()
+    {
+        if (_folderNameWasEdited || _providerPicker.SelectedItem is not ProviderChoice choice) return;
+        var suggested = CheckoutPath.SuggestFolderName(_remote.Text, choice.Kind);
+        _updatingFolderName = true;
+        try { _cloneFolderName.Text = suggested; }
+        finally { _updatingFolderName = false; }
+        UpdateDestinationPreview();
+    }
+
+    private void UpdateDestinationPreview()
+    {
+        if (SelectedOperation != VcsOperation.Clone) { _destinationPreview.Text = ""; return; }
+        if (string.IsNullOrWhiteSpace(_destination.Text)) { _destinationPreview.Text = "상위 폴더를 선택하세요."; return; }
+        if (string.IsNullOrWhiteSpace(_cloneFolderName.Text)) { _destinationPreview.Text = "원격 저장소 주소를 입력하면 폴더 이름을 제안합니다."; return; }
+        try { _destinationPreview.Text = CheckoutPath.GetDestination(_destination.Text.Trim(), _cloneFolderName.Text.Trim()); }
+        catch (Exception ex) when (ex is VcsException or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            _destinationPreview.Text = ex.Message;
+        }
     }
 
     private void Create_Click(object sender, RoutedEventArgs e)
@@ -128,20 +222,22 @@ public sealed class CreateRepositoryWindow : Window
         try
         {
             if (_modePicker.SelectedItem is not ModeChoice mode) return;
-            if (string.IsNullOrWhiteSpace(_destination.Text) || !Path.IsPathFullyQualified(_destination.Text.Trim())) throw new VcsException("대상 폴더의 절대 경로를 입력하세요.");
-            var destination = Path.GetFullPath(_destination.Text.Trim());
-            if (File.Exists(destination)) throw new VcsException("대상 경로에 파일이 있습니다. 폴더 경로를 지정하세요.");
-            var remote = _remote.Text.Trim();
+            if (string.IsNullOrWhiteSpace(_destination.Text) || !Path.IsPathFullyQualified(_destination.Text.Trim())) throw new VcsException("저장 위치의 절대 경로를 입력하세요.");
+            var location = Path.GetFullPath(_destination.Text.Trim());
+            if (File.Exists(location)) throw new VcsException("저장 위치에 파일이 있습니다. 폴더 경로를 지정하세요.");
+            var remote = _remote.Text;
             if (mode.Operation == VcsOperation.Clone)
             {
-                if (string.IsNullOrWhiteSpace(remote) || remote.StartsWith('-')) throw new VcsException("올바른 원격 저장소 주소를 입력하세요.");
+                remote = RemoteUrl.Validate(remote);
+                if (string.IsNullOrWhiteSpace(_cloneFolderName.Text)) throw new VcsException("저장소 폴더 이름을 입력하거나 원격 저장소 주소를 확인하세요.");
+                var destination = CheckoutPath.GetDestination(location, _cloneFolderName.Text.Trim());
+                if (!Directory.Exists(location)) throw new VcsException("저장할 상위 폴더가 존재해야 합니다. 먼저 폴더를 선택하세요.");
                 if (Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any()) throw new VcsException("복제 대상 폴더가 비어 있어야 합니다.");
-                var parent = Path.GetDirectoryName(destination) ?? throw new VcsException("드라이브 루트는 복제 대상으로 사용할 수 없습니다.");
-                if (!Directory.Exists(parent)) throw new VcsException("상위 폴더가 존재해야 합니다. 먼저 상위 폴더를 선택하세요.");
-                Request = new VcsRequest(mode.Operation, parent, Remote: remote, Destination: destination);
+                Request = new VcsRequest(mode.Operation, location, Remote: remote, Destination: destination);
             }
             else
             {
+                var destination = location;
                 if (Directory.Exists(Path.Combine(destination, ".git")) || File.Exists(Path.Combine(destination, ".git")) || Directory.Exists(Path.Combine(destination, ".lore")) || Directory.Exists(Path.Combine(destination, ".svn")))
                     throw new VcsException("이 폴더에는 이미 저장소가 있습니다. ‘폴더 열기’를 사용하세요.");
                 Request = new VcsRequest(mode.Operation, destination);
