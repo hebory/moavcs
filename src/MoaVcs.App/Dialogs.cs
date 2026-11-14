@@ -674,7 +674,7 @@ public sealed class SettingsWindow : Window
             if (_store.LoadWarning is { } warning) throw new IOException(warning);
             var updated = new AppSettings
             {
-                RecentRepositories = _settings.RecentRepositories,
+                RecentRepositories = saved.RecentRepositories,
                 ExecutablePaths = _paths.ToDictionary(pair => pair.Key, pair => pair.Value.Text.Trim()),
                 ExternalTools = externalTools,
                 ExplorerMenu = ReadExplorerMenuSettings(),
@@ -685,6 +685,7 @@ public sealed class SettingsWindow : Window
             var menuSettingsChanged = previousMenuSettings.ShowCommitAtTopLevel != updated.ExplorerMenu.ShowCommitAtTopLevel ||
                 previousMenuSettings.ShowUpdateAtTopLevel != updated.ExplorerMenu.ShowUpdateAtTopLevel;
             _store.Save(updated);
+            _settings.RecentRepositories = updated.RecentRepositories;
             _settings.ExecutablePaths = updated.ExecutablePaths;
             _settings.ExternalTools = updated.ExternalTools;
             if (menuSettingsChanged)

@@ -38,6 +38,12 @@ internal static class Program
                 app.Shutdown();
                 return 0;
             }
+            if (Environment.GetEnvironmentVariable("MOAVCS_UI_SMOKE_ONLY") == "repositories")
+            {
+                RunRepositorySidebarSmoke(scratch, output);
+                app.Shutdown();
+                return 0;
+            }
             _fixture = Path.Combine(scratch, "ui-fixture-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_fixture);
             Git("init"); Git("config", "user.name", "MoaVCS UI test"); Git("config", "user.email", "test@example.invalid");
@@ -104,6 +110,7 @@ internal static class Program
             if (((DataGrid)repoWindow.FindName("HistoryGrid")).Items.Count != 1) throw new InvalidOperationException("History view did not load the fixture commit.");
             RunHistoryDetailsSmoke(settings, scratch, output);
             RunStartupActionSmoke(settings, _fixture, scratch);
+            RunRepositorySidebarSmoke(scratch, output);
             RunCheckoutDialogSmoke(scratch, output);
             RunCancelledOperationSmoke(settings, _fixture);
             RunCommitStagingSmoke(settings, scratch);
@@ -368,6 +375,114 @@ internal static class Program
             throw new InvalidOperationException("Lore blame did not show the committed lines with their recorded author and revision.");
         Render(inspections[1], Path.Combine(output, "lore-blame.png"));
         Console.WriteLine($"PASS: Lore CLI {RunLore(loreExecutable, _loreFixture, "--version").Trim()} compare and blame smoke; {output}");
+    }
+
+    private static void RunRepositorySidebarSmoke(string scratch, string output)
+    {
+        var root = Path.Combine(scratch, "ui-repositories-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        MainWindow? window = null;
+        try
+        {
+            var active = Path.Combine(root, "현재 작업", "moavcs");
+            Directory.CreateDirectory(active);
+            GitAt(active, "init", "--initial-branch=main");
+            GitAt(active, "config", "user.name", "MoaVCS sidebar test");
+            GitAt(active, "config", "user.email", "sidebar-test@example.invalid");
+            File.WriteAllText(Path.Combine(active, "keep.txt"), "repository files stay on disk");
+            GitAt(active, "add", "keep.txt");
+            GitAt(active, "commit", "-m", "사이드바 검증 기준");
+            var client = Path.Combine(root, "클라이언트", "shared");
+            var server = Path.Combine(root, "서버", "shared");
+            Directory.CreateDirectory(client);
+            Directory.CreateDirectory(server);
+            File.WriteAllText(Path.Combine(server, "keep.txt"), "must survive history removal");
+            var entries = new List<RecentRepository>
+            {
+                new(Path.Combine(root, "고정 작업", "design"), VcsKind.Git, true),
+                new(Path.Combine(root, "고정 작업", "engine"), VcsKind.Lore, true),
+                new(client, VcsKind.Git), new(server, VcsKind.Svn)
+            };
+            entries.AddRange(Enumerable.Range(1, 6).Select(index =>
+                new RecentRepository(Path.Combine(root, "최근 작업", "project-" + index), VcsKind.Git)));
+            var store = new SettingsStore(Path.Combine(root, "settings.json"));
+            store.Save(new AppSettings { RecentRepositories = entries });
+            window = new MainWindow(new LaunchOptions(active), store);
+            window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            WaitUntilRepositoryReady(window, TimeSpan.FromSeconds(20), "Sidebar fixture did not load.");
+            var recent = (ItemsControl)window.FindName("RecentList");
+            var pinned = (ItemsControl)window.FindName("PinnedList");
+            var search = (TextBox)window.FindName("RepositorySearchBox");
+            if (recent.Items.Count != 9 || pinned.Items.Count != 2 ||
+                !recent.Items.Cast<RecentItem>().Single(item => item.Path == active).IsCurrent ||
+                recent.Items.Cast<RecentItem>().Count(item => item.IsCurrent) != 1)
+                throw new InvalidOperationException("Sidebar must show all recent items, pinned items and only the active repository highlight.");
+            if (recent.Items.Cast<RecentItem>().Single(item => item.Path == client).ParentPath.Length == 0)
+                throw new InvalidOperationException("Same-name repositories need a parent-path label.");
+            Render(window, Path.Combine(output, "sidebar-repositories.png"));
+            RenderAtMinimum(window, Path.Combine(output, "sidebar-repositories-min.png"));
+
+            search.Text = "클라이언트";
+            if (recent.Items.Count != 1 || ((RecentItem)recent.Items[0]).Path != client || pinned.Items.Count != 0)
+                throw new InvalidOperationException("Sidebar search must filter full paths as well as names.");
+            search.Text = "SVN";
+            if (recent.Items.Count != 1 || ((RecentItem)recent.Items[0]).Path != server)
+                throw new InvalidOperationException("Sidebar search must filter provider names.");
+            search.Text = "no matching repository";
+            if (recent.Items.Count != 0 || pinned.Items.Count != 0 || store.Load().RecentRepositories.Count != 11)
+                throw new InvalidOperationException("An empty search result must not delete stored history.");
+            search.Text = "";
+
+            void InvokeItemMenu(string path, string menuName)
+            {
+                Render(window, Path.Combine(output, "sidebar-menu-state.png"));
+                var button = Descendants((DependencyObject)window.Content).OfType<Button>().Single(button =>
+                    button.Name == "RepositoryItemMenuButton" && button.Tag is RecentItem item && item.Path == path);
+                var context = button.ContextMenu ?? throw new InvalidOperationException("Repository menu is missing.");
+                context.PlacementTarget = button;
+                context.DataContext = button.Tag;
+                var command = context.Items.OfType<MenuItem>().Single(item => item.Name == menuName);
+                command.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            }
+            InvokeItemMenu(client, "RepositoryPinMenuItem");
+            if (pinned.Items.Count != 3 || recent.Items.Count != 8 ||
+                !store.Load().RecentRepositories.Single(item => item.Path == client).IsPinned)
+                throw new InvalidOperationException("Pinning must move an item into the pinned group and persist it.");
+
+            var staleSettings = new SettingsWindow(store.Load(), store, new ProcessCommandRunner());
+            InvokeItemMenu(server, "RepositoryRemoveMenuItem");
+            if (store.Load().RecentRepositories.Any(item => item.Path == server) ||
+                File.ReadAllText(Path.Combine(server, "keep.txt")) != "must survive history removal")
+                throw new InvalidOperationException("Removing history must remove only the selected record and preserve repository files.");
+            var timeout = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            timeout.Tick += (_, _) => { timeout.Stop(); staleSettings.Close(); };
+            staleSettings.Dispatcher.BeginInvoke(new Action(() =>
+                Descendants((DependencyObject)staleSettings.Content).OfType<Button>().Single(button => button.Name == "SaveSettingsButton")
+                    .RaiseEvent(new RoutedEventArgs(Button.ClickEvent))));
+            timeout.Start();
+            var saved = staleSettings.ShowDialog();
+            timeout.Stop();
+            if (saved != true || store.Load().RecentRepositories.Any(item => item.Path == server))
+                throw new InvalidOperationException("A settings dialog opened before history removal must not restore the deleted record.");
+
+            var header = (Button)window.FindName("RepositoryListMenuButton");
+            var clear = header.ContextMenu.Items.OfType<MenuItem>().Single(item => item.Name == "ClearRecentMenuItem");
+            clear.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            var remaining = store.Load().RecentRepositories;
+            if (recent.Items.Count != 0 || pinned.Items.Count != 3 || remaining.Count != 3 || remaining.Any(item => !item.IsPinned) ||
+                ((TextBlock)window.FindName("RepoPath")).Text != active || !File.Exists(Path.Combine(active, "keep.txt")))
+                throw new InvalidOperationException("Clearing recent history must preserve pins, the open workspace and all repository files.");
+            InvokeItemMenu(client, "RepositoryPinMenuItem");
+            if (pinned.Items.Count != 2 || recent.Items.Count != 1 || store.Load().RecentRepositories.Single(item => item.Path == client).IsPinned)
+                throw new InvalidOperationException("Unpinning must return the selected repository to recent history.");
+            Render(window, Path.Combine(output, "sidebar-cleaned.png"));
+            Console.WriteLine("PASS: sidebar search, complete history, active highlight, pin/unpin, remove, clear and stale-settings preservation");
+        }
+        finally
+        {
+            window?.Close();
+            DeleteSmokePath(root);
+        }
     }
 
     private static void RunCheckoutDialogSmoke(string scratch, string output)

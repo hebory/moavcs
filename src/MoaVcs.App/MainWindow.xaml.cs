@@ -40,8 +40,10 @@ public partial class MainWindow : Window
         _settingsStore = settingsStore ?? new SettingsStore();
         _launchOptions = options;
         _settings = _settingsStore.Load();
+        _repositoryHistory = new RepositoryHistory(_settingsStore);
         InitializeComponent();
         VersionText.Text = "MoaVCS  /  " + (typeof(App).Assembly.GetName().Version?.ToString(3) ?? "0.1.0");
+        InitializeRepositoryHistory();
         UpdateRecentList();
         UpdateControls();
         Loaded += OnLoaded;
@@ -572,23 +574,6 @@ public partial class MainWindow : Window
         await LoadDiffAsync();
     }
 
-    private void RememberRepository(RepositoryInfo repository)
-    {
-        _settings.RecentRepositories.RemoveAll(r => r.Path.Equals(repository.RootPath, StringComparison.OrdinalIgnoreCase));
-        _settings.RecentRepositories.Insert(0, new RecentRepository(repository.RootPath, repository.Kind));
-        _settings.RecentRepositories = _settings.RecentRepositories.Take(12).ToList();
-        try { _settingsStore.SaveRecentRepositories(_settings.RecentRepositories); }
-        catch (Exception ex) { ShowNotice("최근 저장소를 저장하지 못했습니다: " + ex.Message); }
-        UpdateRecentList();
-        ExplorerOverlays.Wake();
-    }
-
-    private void UpdateRecentList()
-    {
-        RecentList.ItemsSource = _settings.RecentRepositories.Take(6).Select(r => new RecentItem(r.Path, r.VcsKind)).ToList();
-        RecentEmpty.Visibility = _settings.RecentRepositories.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
     private void ShowNotice(string message) { NoticeText.Text = message; NoticeText.ToolTip = message; NoticePanel.Visibility = Visibility.Visible; }
     private void Log(string message)
     {
@@ -604,7 +589,6 @@ public partial class MainWindow : Window
         var dialog = new OpenFolderDialog { Title = "MoaVCS에서 열 저장소 폴더 선택", Multiselect = false };
         if (dialog.ShowDialog(this) == true) await OpenRepositoryAsync(dialog.FolderName);
     }
-    private async void Recent_Click(object sender, RoutedEventArgs e) { if (sender is Button { Tag: RecentItem item }) await OpenRepositoryAsync(item.Path, item.Kind); }
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
     private async void Stage_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(VcsOperation.Stage);
     private async void Unstage_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(VcsOperation.Unstage);
@@ -747,10 +731,4 @@ public sealed record ProviderChoice(VcsKind Kind, string Label)
 {
     public static IReadOnlyList<ProviderChoice> All { get; } = [new(VcsKind.Git, "Git"), new(VcsKind.Svn, "SVN"), new(VcsKind.Perforce, "Perforce"), new(VcsKind.Lore, "Lore")];
     public override string ToString() => Label;
-}
-
-public sealed record RecentItem(string Path, VcsKind Kind)
-{
-    public string Name => System.IO.Path.GetFileName(Path.TrimEnd('\\', '/'));
-    public string KindLabel => ProviderChoice.All.First(p => p.Kind == Kind).Label;
 }
