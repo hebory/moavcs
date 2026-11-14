@@ -3,5 +3,6 @@
 .vs/
 .local/
 artifacts/
+target/
 *.user
 *.suo
