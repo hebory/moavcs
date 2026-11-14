@@ -1,0 +1,19 @@
+[package]
+name = "moavcs-shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "MoaVcsShell"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+moavcs-core = { path = "../moavcs-core" }
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+[build-dependencies]
+embed-resource = "3"
+

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/moavcs-core"]
+members = ["crates/moavcs-core", "crates/moavcs-app", "crates/moavcs-shell"]
 resolver = "2"
 
 [workspace.package]
@@ -16,5 +16,4 @@ windows = { version = "0.58", features = ["implement", "Win32_Foundation", "Win3
 lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
-
 
