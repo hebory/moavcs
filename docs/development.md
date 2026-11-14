@@ -26,6 +26,8 @@ tests\MoaVcs.Tests는 실제 Git 임시 저장소 통합 테스트, 프로세스
 
 커밋 상세 변경을 좁게 확인하려면 `dotnet run --project tests/MoaVcs.Tests -- --history-git` 또는 `--history-providers`를 사용합니다. 전자는 실제 Git의 최초·병합 커밋과 추가·삭제·이름 변경·바이너리·작업 트리 격리, 후자는 서버에 연결하지 않는 SVN·Perforce fixture 검사입니다. Lore의 리비전 상세 검사는 `--lore`에 포함되며 실제 CLI를 지정해야 통합 검사가 실행됩니다. WPF smoke는 커밋 선택, 파일 선택, 빠른 선택 전환, 긴 메시지와 최소 창 크기도 검사합니다.
 
+Git 브랜치·원격 이력 정보는 `dotnet run --project tests/MoaVcs.Tests -- --history-context`로 검사합니다. 실제 Git과 임시 로컬 bare 원격을 사용해 refs·태그·부모, 추적 브랜치와의 분기·동기화 수, 추적 미설정·분리된 HEAD·첫 커밋 전·얕은 저장소와 명시적 Fetch를 확인합니다. WPF 검사는 `$env:MOAVCS_UI_SMOKE_ONLY = 'history-info'`를 설정해 `dotnet run --project tests/MoaVcs.UiSmoke`로 좁힐 수 있습니다. Fetch 전후의 원격 커밋 표시, 범위 필터, 병합 그래프, 작성자·부모, 최소 창 크기와 작업 파일 보존을 검사합니다. 외부 Git 호스팅 서비스의 인증·서버 연결 검증과는 구분하며 전체 검증 전에는 환경 변수를 해제합니다.
+
 탐색기 아이콘의 벡터 원본은 `assets/explorer-icons/icons.xaml`이며 브랜드 로고는 `assets/branding/icon.xaml`을 재사용합니다. Windows에서 `powershell.exe -NoProfile -STA -File scripts/New-ExplorerIcons.ps1 -Preview`로 ICO를 다시 만들 수 있습니다. 밝은 배경·어두운 배경의 16·24·32 픽셀 미리 보기는 `artifacts/screenshots/explorer-icons.png`에 생성됩니다. 생성된 ICO를 원본과 함께 커밋하며, 일반 빌드에서는 생성 도구를 실행하지 않고 ICO를 복사합니다.
 
 Lore의 실제 CLI 통합·WPF 검사는 아래처럼 실행합니다. 준비 스크립트는 공식 Windows x64 Lore 0.13.0 ZIP을 `.local/test-tools`에 내려받고 고정된 SHA-256을 검증합니다. 시스템 설치나 PATH 변경 없이 테스트에서만 사용합니다. CI와 릴리스에서도 같은 절차를 실행합니다.
