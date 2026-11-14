@@ -20,6 +20,8 @@ tests\MoaVcs.Tests는 실제 Git 임시 저장소 통합 테스트, 프로세스
 
 검증은 사용자 저장소를 변경하거나 탐색기 메뉴를 등록하지 않습니다. 임시 저장소는 .local 안에서 생성하고 정리합니다. WPF 렌더링 검사는 실제 탐색기에서 클릭하는 수동 검증을 대신하지 않습니다.
 
+저장소 목록은 `dotnet run --project tests/MoaVcs.Tests -- --repositories`로 고정·제거·최근 기록 제한·기존 설정 호환과 다른 설정 보존을 검사합니다. WPF 검사를 좁히려면 `$env:MOAVCS_UI_SMOKE_ONLY = 'repositories'`를 설정하고 `dotnet run --project tests/MoaVcs.UiSmoke`를 실행합니다. 검색·현재 저장소 강조·항목 메뉴·고정/해제·최근 목록 비우기와 오래 열린 설정창이 제거한 항목을 복원하지 않는지를 확인합니다. 전체 검증 전에는 해당 환경 변수를 제거하세요.
+
 복제·체크아웃 경로 제안은 `dotnet run --project tests/MoaVcs.Tests -- --checkout`으로 URL 형식과 안전한 폴더 이름을 검사합니다. WPF 검사를 좁히려면 PowerShell에서 `$env:MOAVCS_UI_SMOKE_ONLY = 'checkout'`을 설정하고 `dotnet run --project tests/MoaVcs.UiSmoke`를 실행하세요. 탐색기 시작 폴더, 주소·수동 이름·상위 폴더 변경, 찾아보기, 모드 전환, 실제 로컬 Git 복제를 확인합니다. 전체 검증 전에는 `Remove-Item Env:MOAVCS_UI_SMOKE_ONLY`로 제한을 해제하세요. SVN·Lore 주소의 폴더 이름 제안은 서버 연결 없이 검사합니다. 이름 제한은 [Windows 파일 이름 규칙](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)을 따릅니다.
 
 커밋 상세 변경을 좁게 확인하려면 `dotnet run --project tests/MoaVcs.Tests -- --history-git` 또는 `--history-providers`를 사용합니다. 전자는 실제 Git의 최초·병합 커밋과 추가·삭제·이름 변경·바이너리·작업 트리 격리, 후자는 서버에 연결하지 않는 SVN·Perforce fixture 검사입니다. Lore의 리비전 상세 검사는 `--lore`에 포함되며 실제 CLI를 지정해야 통합 검사가 실행됩니다. WPF smoke는 커밋 선택, 파일 선택, 빠른 선택 전환, 긴 메시지와 최소 창 크기도 검사합니다.
