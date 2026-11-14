@@ -19,6 +19,7 @@ internal static class Program
                 return 0;
             }
             if (args.SequenceEqual(["--history-git"])) { await HistoryGitTests.RunAsync(); Console.WriteLine("PASS: actual Git commit details and revision diffs"); return 0; }
+            if (args.SequenceEqual(["--checkout"])) { CheckoutPathTests.Run(); Console.WriteLine("PASS: checkout repository names and safe destination paths"); return 0; }
             if (args.SequenceEqual(["--overlay"]))
             {
                 await ExplorerOverlayTests.RunAsync();
@@ -26,7 +27,9 @@ internal static class Program
                 Console.WriteLine("PASS: Explorer overlay status snapshot, worker scan, cache and settings");
                 return 0;
             }
-            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push, --conflicts, --overlay, --history-git, --history-providers or no arguments.");
+            if (args.Length != 0) throw new ArgumentException("Unknown test option. Use --lore, --shell, --remote, --push, --conflicts, --overlay, --history-git, --history-providers, --checkout or no arguments.");
+            CheckoutPathTests.Run();
+            Console.WriteLine("PASS: checkout repository names and safe destination paths");
             TextDiffTests.Run();
             Console.WriteLine("PASS: line comparison alignment, bounded fallback, Unicode, cancellation and newline labels");
             await ProcessTests.RunAsync();
