@@ -31,6 +31,25 @@ pub struct GraphLayout {
 }
 
 impl GraphLayout {
+    /// Keep simple histories compact while reserving lanes for visible merges.
+    pub fn column_width(&self) -> f32 {
+        let lane = self
+            .rows
+            .values()
+            .map(|row| {
+                row.segments
+                    .iter()
+                    .map(|s| s.from.max(s.to))
+                    .chain(row.parent_edges.iter().map(|e| e.lane))
+                    .chain(std::iter::once(row.node_lane))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .max()
+            .unwrap_or(0)
+            .min(VISIBLE_LANES - 1);
+        (LEFT + (lane + 1) as f32 * LANE_PITCH + 8.0).min(GRAPH_WIDTH)
+    }
     /// Build graph rows once for the displayed history entries (normally at most 200).
     /// Entries are expected newest first, as returned by `git log`.
     pub fn new(entries: &[HistoryEntry]) -> Self {
@@ -178,7 +197,7 @@ impl GraphLayout {
     pub fn paint_row(&self, ui: &mut egui::Ui, id: &str, height: f32) -> Response {
         let height = height.max(1.0);
         let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(GRAPH_WIDTH, height), egui::Sense::hover());
+            ui.allocate_exact_size(Vec2::new(self.column_width(), height), egui::Sense::hover());
         let Some(row) = self.rows.get(id) else {
             return response;
         };
