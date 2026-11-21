@@ -1,5 +1,7 @@
 mod dialogs;
 mod inspection;
+#[cfg(test)]
+mod performance;
 mod theme;
 mod workspace;
 use theme::*;
