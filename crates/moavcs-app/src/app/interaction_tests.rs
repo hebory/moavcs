@@ -40,6 +40,123 @@ fn click(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
 }
 
 #[test]
+fn clean_worktree_can_show_unpushed_commits_and_filter_publication_state() {
+    let mut app = isolated_app();
+    app.repo = Some(RepositoryInfo {
+        kind: VcsKind::Git,
+        ..Default::default()
+    });
+    let git = GitHistoryContext {
+        current_branch: "main".into(),
+        head_id: "aaaaaaa".into(),
+        push_target: "origin/main".into(),
+        push_target_id: "bbbbbbb".into(),
+        push_ahead: Some(1),
+        push_behind: Some(0),
+        ..Default::default()
+    };
+    app.git_sync = Some(git.clone());
+    let ctx = egui::Context::default();
+    configure_visuals(&ctx);
+    let frame = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1370., 900.),
+            )),
+            ..Default::default()
+        },
+        |ctx| app.body(ctx),
+    );
+    assert!(rendered_text(&frame, "미커밋 파일 없음").is_some());
+    assert!(rendered_text(&frame, "미푸시 1개").is_some());
+
+    app.history.git = Some(git);
+    app.history.entries = [HistoryRelation::Shared, HistoryRelation::LocalOnly]
+        .into_iter()
+        .enumerate()
+        .map(|(i, relation)| HistoryEntry {
+            id: i.to_string(),
+            push_relation: Some(relation),
+            ..Default::default()
+        })
+        .collect();
+    app.history_filter = Some(HistoryRelation::LocalOnly);
+    app.apply_history_filter();
+    assert_eq!(app.visible_history, [1]);
+    app.history_filter = Some(HistoryRelation::UpstreamOnly);
+    app.apply_history_filter();
+    assert!(app.visible_history.is_empty() && app.details.is_none());
+    app.history.git.as_mut().unwrap().push_ahead = None;
+    app.apply_history_filter();
+    assert_eq!(app.history_filter, None);
+    assert_eq!(app.visible_history, [0, 1]);
+}
+
+#[test]
+fn selecting_git_file_previews_the_side_with_changes() {
+    let mut app = isolated_app();
+    app.repo = Some(RepositoryInfo {
+        kind: VcsKind::Git,
+        ..Default::default()
+    });
+    for (path, index, working) in [("index", "M", ""), ("mixed", "M", "M"), ("work", "", "M")] {
+        app.changes.push(FileChange {
+            path: path.into(),
+            status: "modified".into(),
+            index_status: index.into(),
+            worktree_status: working.into(),
+            ..Default::default()
+        });
+    }
+    app.select_file("index");
+    assert!(app.staged);
+    app.select_file("mixed");
+    assert!(!app.staged);
+    app.staged = true;
+    app.select_file("mixed");
+    assert!(app.staged);
+    app.select_file("work");
+    assert!(!app.staged);
+}
+
+#[test]
+fn minimum_window_keeps_file_list_visible_with_sync_summary_and_notice() {
+    let mut app = isolated_app();
+    app.repo = Some(RepositoryInfo {
+        kind: VcsKind::Git,
+        ..Default::default()
+    });
+    app.provider = Some(create_provider(VcsKind::Git, "git"));
+    app.git_sync = Some(GitHistoryContext::default());
+    app.notice = Some("원격 상태 안내".into());
+    app.set_changes(vec![FileChange {
+        path: "compact-file.txt".into(),
+        status: "untracked".into(),
+        ..Default::default()
+    }]);
+    let ctx = egui::Context::default();
+    configure_visuals(&ctx);
+    let frame = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(860., 620.),
+            )),
+            ..Default::default()
+        },
+        |ctx| {
+            app.top(ctx);
+            app.sidebar(ctx);
+            app.body(ctx);
+        },
+    );
+    for label in ["compact-file.txt", "해제", "커밋"] {
+        assert!(rendered_text(&frame, label).is_some(), "{label}");
+    }
+}
+
+#[test]
 fn sidebar_click_switches_view_while_history_is_in_flight() {
     let mut app = isolated_app();
     app.repo = Some(RepositoryInfo::default());

@@ -115,9 +115,12 @@ pub fn run(output: PathBuf) -> eframe::Result {
     result?;
     for file in [
         "workspace.png",
+        "staged.png",
         "history.png",
+        "history-pushed.png",
         "diff.png",
         "blame.png",
+        "partially-staged.png",
         "settings.png",
         "min-window.png",
         "history-min.png",
@@ -131,9 +134,12 @@ pub fn run(output: PathBuf) -> eframe::Result {
         "long-labels-min.png",
         "workspace-list.png",
         "workspace.assertions.json",
+        "staged.assertions.json",
         "history.assertions.json",
+        "history-pushed.assertions.json",
         "diff.assertions.json",
         "blame.assertions.json",
+        "partially-staged.assertions.json",
         "settings.assertions.json",
         "min-window.assertions.json",
         "assertions.json",
@@ -145,6 +151,14 @@ pub fn run(output: PathBuf) -> eframe::Result {
         }
     }
     Ok(())
+}
+
+pub fn head_id(workspace: &Path) -> Result<String, String> {
+    let fixture = workspace
+        .parent()
+        .ok_or_else(|| "workspace parent is missing".to_owned())?;
+    let output = git(fixture, workspace, ["rev-parse", "HEAD"])?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 pub fn prepare_workspace_list(workspace: &Path) -> Result<(), String> {

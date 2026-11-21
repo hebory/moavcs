@@ -1,4 +1,5 @@
 mod dialogs;
+mod git_sync;
 mod inspection;
 mod inspection_data;
 #[cfg(test)]
@@ -62,6 +63,7 @@ pub(super) enum Inspection {
 enum ReadSlot {
     Open,
     Status,
+    GitSync,
     History,
     Details,
     HistoryDiff,
@@ -81,6 +83,7 @@ pub(super) enum Event {
         std::result::Result<(Arc<dyn VcsProvider>, RepositoryInfo, Vec<FileChange>), String>,
     ),
     Status(u64, std::result::Result<Vec<FileChange>, String>),
+    GitSync(u64, std::result::Result<Option<GitHistoryContext>, String>),
     History(u64, std::result::Result<HistorySnapshot, String>),
     Details(u64, String, std::result::Result<HistoryDetails, String>),
     Hdiff(
@@ -118,12 +121,17 @@ pub struct MoaApp {
     provider: Option<Arc<dyn VcsProvider>>,
     repo: Option<RepositoryInfo>,
     changes: Vec<FileChange>,
+    git_file_counts: workspace::GitFileCounts,
+    git_sync: Option<GitHistoryContext>,
+    git_sync_error: Option<String>,
     picked: BTreeSet<String>,
     file: Option<String>,
     diff: String,
     tab: Tab,
     scope: HistoryScope,
     history: HistorySnapshot,
+    history_filter: Option<HistoryRelation>,
+    visible_history: Vec<usize>,
     history_graph: GraphLayout,
     revision: Option<String>,
     details: Option<HistoryDetails>,
@@ -209,12 +217,17 @@ impl MoaApp {
             provider: None,
             repo: None,
             changes: vec![],
+            git_file_counts: Default::default(),
+            git_sync: None,
+            git_sync_error: None,
             picked: BTreeSet::new(),
             file: None,
             diff: String::new(),
             tab: Tab::Changes,
             scope: HistoryScope::CurrentBranch,
             history: HistorySnapshot::default(),
+            history_filter: None,
+            visible_history: vec![],
             history_graph: GraphLayout::default(),
             revision: None,
             details: None,
@@ -513,6 +526,26 @@ impl MoaApp {
                     changed.is_some(),
                     "modified tracked.txt row missing",
                 );
+                let pending_worktree = changed.as_ref().is_some_and(|file| {
+                    !file.staged()
+                        && !file.worktree_status.trim().is_empty()
+                        && file.worktree_status != "?"
+                });
+                self.smoke_assert(
+                    "publication before staging",
+                    pending_worktree,
+                    "fixture edit was not shown as an unstaged worktree change",
+                );
+                let baseline_head = crate::smoke::head_id(&repo.root).unwrap_or_default();
+                self.smoke_assert(
+                    "publication baseline HEAD",
+                    !baseline_head.is_empty(),
+                    "could not read fixture HEAD before staging",
+                );
+                self.smoke_all_assertions.insert(
+                    "publication_baseline".into(),
+                    serde_json::json!({"head":baseline_head,"worktree_change":pending_worktree,"staged":false}),
+                );
                 self.smoke_assert(
                     "sidebar recent repository",
                     self.settings
@@ -536,7 +569,7 @@ impl MoaApp {
                     return;
                 }
                 self.smoke_assert("diff preview", true, "selected file preview is populated");
-                self.smoke_capture(ctx,"workspace",1,serde_json::json!({"repository_opened":true,"modified_file_visible":true,"branch":repo.branch,"status":file.status}));
+                self.smoke_capture(ctx,"workspace",1,serde_json::json!({"repository_opened":true,"modified_file_visible":true,"branch":repo.branch,"status":file.status,"unstaged_before_stage":pending_worktree}));
             }
             1 => {
                 let path = changed
@@ -576,20 +609,42 @@ impl MoaApp {
                     "staged_diff_preview".into(),
                     serde_json::json!({"visible": staged_preview}),
                 );
+                self.smoke_capture(
+                    ctx,
+                    "staged",
+                    24,
+                    serde_json::json!({"staged_before_commit":true,"path":"tracked.txt"}),
+                );
+            }
+            24 => {
                 self.staged = false;
                 self.execute(Operation::Commit, "MoaVCS smoke commit".into(), vec![]);
                 self.smoke_step = 3;
             }
             3 => {
                 let clean = self.changes.is_empty();
+                let baseline = self
+                    .smoke_all_assertions
+                    .get("publication_baseline")
+                    .and_then(|value| value.get("head"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let committed_head = crate::smoke::head_id(&repo.root).unwrap_or_default();
+                let head_moved = !committed_head.is_empty() && committed_head != baseline;
                 self.smoke_assert(
                     "commit operation",
                     clean,
                     "commit action left fixture changes",
                 );
+                self.smoke_assert(
+                    "publication HEAD after commit",
+                    head_moved,
+                    "HEAD did not move after the local commit",
+                );
                 self.smoke_all_assertions.insert(
                     "commit_operation".into(),
-                    serde_json::json!({"clean_after_commit": clean, "commit_message": "MoaVCS smoke commit"}),
+                    serde_json::json!({"clean_after_commit": clean, "commit_message": "MoaVCS smoke commit", "baseline_head":baseline,"head_after_commit":committed_head,"head_moved":head_moved}),
                 );
                 self.tab = Tab::History;
                 self.load_history();
@@ -622,6 +677,21 @@ impl MoaApp {
                     committed,
                     "new commit missing from history",
                 );
+                let local_only = self.history.entries.first().is_some_and(|entry| {
+                    entry.relation == HistoryRelation::LocalOnly
+                        && entry.push_relation == Some(HistoryRelation::LocalOnly)
+                });
+                self.smoke_assert(
+                    "history local-only publication state",
+                    local_only,
+                    "new local commit was not classified LocalOnly against upstream and push refs",
+                );
+                let push_ahead = metadata.as_ref().and_then(|info| info.push_ahead);
+                self.smoke_assert(
+                    "push target ahead count before push",
+                    push_ahead == Some(1),
+                    "push target did not report one local-only commit before push",
+                );
                 self.smoke_assert(
                     "history file detail",
                     details_have_file,
@@ -646,7 +716,64 @@ impl MoaApp {
                     .as_ref()
                     .map(|info| info.upstream.as_str())
                     .unwrap_or("");
-                self.smoke_capture(ctx,"history",5,serde_json::json!({"new_commit_visible":committed,"file_detail_visible":details_have_file,"file_diff_visible":file_diff,"branch":branch,"upstream":upstream,"summary":summary}));
+                self.smoke_all_assertions.insert(
+                    "publication_before_push".into(),
+                    serde_json::json!({"entry_relation":"LocalOnly","push_relation":"LocalOnly","push_ahead":push_ahead,"head":metadata.as_ref().map(|info|info.head_id.as_str()).unwrap_or("")}),
+                );
+                self.smoke_capture(ctx,"history",43,serde_json::json!({"new_commit_visible":committed,"file_detail_visible":details_have_file,"file_diff_visible":file_diff,"branch":branch,"upstream":upstream,"summary":summary,"relation":"LocalOnly","push_relation":"LocalOnly","push_ahead":push_ahead}));
+            }
+            43 => {
+                // Use the real Git provider operation against the fixture's local bare origin.
+                self.notice = None;
+                self.execute(Operation::Push, String::new(), vec![]);
+                self.smoke_step = 44;
+            }
+            44 => {
+                if self.busy.is_some() || self.is_loading() {
+                    return;
+                }
+                let push_succeeded = self
+                    .logs
+                    .last()
+                    .is_some_and(|line| line.starts_with("저장소 작업:"))
+                    && self.notice.is_none();
+                let push_detail = self
+                    .notice
+                    .clone()
+                    .unwrap_or_else(|| "push did not complete".into());
+                self.smoke_assert("fixture push operation", push_succeeded, &push_detail);
+                self.load_history();
+                self.smoke_step = 45;
+            }
+            45 => {
+                let metadata = self.history.git.clone();
+                let newest = self.history.entries.first().cloned();
+                let shared = newest.as_ref().is_some_and(|entry| {
+                    entry.relation == HistoryRelation::Shared
+                        && entry.push_relation == Some(HistoryRelation::Shared)
+                });
+                let tip_matches = metadata.as_ref().is_some_and(|info| {
+                    !info.head_id.is_empty() && info.push_target_id == info.head_id
+                });
+                let no_push_ahead = metadata
+                    .as_ref()
+                    .is_some_and(|info| info.push_ahead == Some(0));
+                let clean_after_push = self.changes.is_empty();
+                self.smoke_assert(
+                    "history pushed publication state",
+                    shared && tip_matches && no_push_ahead && clean_after_push,
+                    "push did not leave a clean worktree, move the local push-tracking ref to HEAD, and update the commit relation",
+                );
+                self.smoke_all_assertions.insert(
+                    "publication_after_push".into(),
+                    serde_json::json!({"entry_relation":newest.as_ref().map(|entry|format!("{:?}",entry.relation)),"push_relation":newest.as_ref().and_then(|entry|entry.push_relation).map(|relation|format!("{relation:?}")),"head":metadata.as_ref().map(|info|info.head_id.as_str()).unwrap_or(""),"push_target_id":metadata.as_ref().map(|info|info.push_target_id.as_str()).unwrap_or(""),"push_ahead":metadata.as_ref().and_then(|info|info.push_ahead),"shared":shared,"clean_after_push":clean_after_push}),
+                );
+                self.smoke_capture(
+                    ctx,
+                    "history-pushed",
+                    5,
+                    serde_json::json!({"relation":"Shared","push_relation":"Shared","push_target_at_HEAD":tip_matches,"push_ahead":0}),
+                );
             }
             5 => {
                 let path = repo.root.join("tracked.txt");
@@ -696,7 +823,50 @@ impl MoaApp {
                         .iter()
                         .any(|line| line.text.contains("UI 변경 내용"));
                 self.smoke_assert("blame", valid, "blame rows did not include committed text");
-                self.smoke_capture(ctx,"blame",10,serde_json::json!({"blame_rows":blame.lines.len(),"committed_line_visible":valid,"path":blame.path}));
+                self.smoke_capture(ctx,"blame",47,serde_json::json!({"blame_rows":blame.lines.len(),"committed_line_visible":valid,"path":blame.path}));
+            }
+            47 => {
+                self.tab = Tab::Changes;
+                self.execute(Operation::Stage, String::new(), vec!["tracked.txt".into()]);
+                self.smoke_step = 48;
+            }
+            48 => {
+                let staged = changed.as_ref().is_some_and(FileChange::staged);
+                self.smoke_assert(
+                    "partial stage setup",
+                    staged,
+                    "fixture edit was not staged before creating the worktree remainder",
+                );
+                if let Err(error) = std::fs::write(
+                    repo.root.join("tracked.txt"),
+                    "UI 변경 내용\nDiff 화면 확인\n아직 스테이징하지 않은 추가 변경\n",
+                ) {
+                    self.smoke_assert("partial stage fixture", false, &error.to_string());
+                }
+                self.refresh();
+                self.smoke_step = 49;
+            }
+            49 => {
+                let partial = changed.as_ref().is_some_and(|file| {
+                    file.staged()
+                        && !file.worktree_status.trim().is_empty()
+                        && file.worktree_status != "?"
+                });
+                self.smoke_assert(
+                    "partially staged status",
+                    partial,
+                    "status did not distinguish staged index changes from additional worktree changes",
+                );
+                self.smoke_all_assertions.insert(
+                    "partially_staged".into(),
+                    serde_json::json!({"index_change":partial,"worktree_change":partial,"path":"tracked.txt"}),
+                );
+                self.smoke_capture(
+                    ctx,
+                    "partially-staged",
+                    10,
+                    serde_json::json!({"index_change":partial,"worktree_change":partial,"path":"tracked.txt"}),
+                );
             }
             10 => {
                 self.inspection = None;
@@ -755,6 +925,14 @@ impl MoaApp {
                 self.smoke_step = 13;
             }
             13 => {
+                let ahead = self.git_sync.as_ref().and_then(|info| info.ahead);
+                let behind = self.git_sync.as_ref().and_then(|info| info.behind);
+                let diverged = ahead == Some(1) && behind == Some(1);
+                self.smoke_assert(
+                    "diverged branch counts",
+                    diverged,
+                    "fixture branches were not reported one commit ahead and behind after peer push",
+                );
                 self.smoke_assert(
                     "conflict status",
                     changed.as_ref().is_some_and(FileChange::conflicted),
@@ -765,6 +943,8 @@ impl MoaApp {
                 self.smoke_step = 14;
             }
             14 => {
+                let ahead = self.git_sync.as_ref().and_then(|info| info.ahead);
+                let behind = self.git_sync.as_ref().and_then(|info| info.behind);
                 let Some(conflict) = self.conflict.clone() else {
                     return;
                 };
@@ -783,7 +963,7 @@ impl MoaApp {
                     ctx,
                     "conflict",
                     32,
-                    serde_json::json!({"local_and_remote_visible":valid}),
+                    serde_json::json!({"local_and_remote_visible":valid,"ahead":ahead,"behind":behind}),
                 );
             }
             15 => {
@@ -1065,8 +1245,20 @@ impl MoaApp {
         });
     }
     fn set_changes(&mut self, changes: Vec<FileChange>) {
-        self.has_conflicts = changes.iter().any(FileChange::conflicted);
-        self.staged_file_count = changes.iter().filter(|f| f.staged()).count();
+        if self
+            .repo
+            .as_ref()
+            .is_some_and(|repo| repo.kind == VcsKind::Git)
+        {
+            self.git_file_counts = workspace::GitFileCounts::from_changes(&changes);
+            self.has_conflicts = self.git_file_counts.conflicts > 0;
+            self.staged_file_count =
+                self.git_file_counts.staged_only + self.git_file_counts.partially_staged;
+        } else {
+            self.git_file_counts = Default::default();
+            self.has_conflicts = changes.iter().any(FileChange::conflicted);
+            self.staged_file_count = changes.iter().filter(|f| f.staged()).count();
+        }
         if !self.picked.is_empty() {
             self.picked = changes
                 .iter()
@@ -1079,6 +1271,7 @@ impl MoaApp {
         let (Some(p), Some(r)) = (self.provider.clone(), self.repo.clone()) else {
             return;
         };
+        self.load_git_sync();
         let (g, c) = self.begin_read(ReadSlot::Status, "작업 공간을 새로 고치는 중…");
         let tx = self.tx.clone();
         thread::spawn(move || {
@@ -1228,11 +1421,21 @@ impl MoaApp {
     }
     fn select_file(&mut self, path: impl Into<String>) {
         let path = path.into();
-        self.selected_conflicted = self
-            .changes
-            .iter()
-            .find(|change| change.path == path)
-            .is_some_and(FileChange::conflicted);
+        let change = self.changes.iter().find(|change| change.path == path);
+        self.selected_conflicted = change.is_some_and(FileChange::conflicted);
+        if let Some(file) = change.filter(|_| {
+            self.repo
+                .as_ref()
+                .is_some_and(|repo| repo.kind == VcsKind::Git)
+        }) {
+            if !file.staged() {
+                self.staged = false;
+            } else if !workspace::git_has_worktree_change(file) {
+                self.staged = true;
+            } else if self.file.as_ref() != Some(&path) {
+                self.staged = false;
+            }
+        }
         self.file = Some(path);
         self.inspection = None;
         self.diff.clear();
@@ -1341,6 +1544,8 @@ impl MoaApp {
                                 self.diff.clear();
                                 self.diff_view = PreparedText::default();
                                 self.history = HistorySnapshot::default();
+                                self.history_filter = None;
+                                self.visible_history.clear();
                                 self.history_graph = GraphLayout::default();
                                 self.revision = None;
                                 self.details = None;
@@ -1355,6 +1560,7 @@ impl MoaApp {
                                 self.selected_conflicted = false;
                                 self.provider = Some(p);
                                 self.repo = Some(repo.clone());
+                                self.load_git_sync();
                                 self.set_changes(changes);
                                 self.file = None;
                                 self.notice = None;
@@ -1414,12 +1620,31 @@ impl MoaApp {
                                         }
                                         _ => {}
                                     }
+                                } else if self.tab == Tab::History {
+                                    self.load_history();
                                 }
                             }
                             Err(e) => {
                                 self.startup_action_pending = false;
                                 self.notice = Some(e);
                             }
+                        }
+                    }
+                }
+                Event::GitSync(g, result) => {
+                    if self.finish_read(ReadSlot::GitSync, g) {
+                        match result {
+                            Ok(context) => {
+                                if let (Some(repo), Some(git)) = (&mut self.repo, &context) {
+                                    repo.branch = if git.is_detached {
+                                        format!("HEAD · {}", short(&git.head_id))
+                                    } else {
+                                        git.current_branch.clone()
+                                    };
+                                }
+                                self.git_sync = context;
+                            }
+                            Err(error) => self.git_sync_error = Some(error),
                         }
                     }
                 }
@@ -1451,29 +1676,9 @@ impl MoaApp {
                     if self.finish_read(ReadSlot::History, g) {
                         match r {
                             Ok(h) => {
-                                let preferred_revision = self.revision.clone();
                                 self.history = h;
                                 self.history_graph = GraphLayout::new(&self.history.entries);
-                                let selected = preferred_revision
-                                    .and_then(|revision| {
-                                        self.history
-                                            .entries
-                                            .iter()
-                                            .find(|entry| entry.id == revision)
-                                            .cloned()
-                                    })
-                                    .or_else(|| self.history.entries.first().cloned());
-                                if let Some(e) = selected {
-                                    self.load_details(&e)
-                                } else {
-                                    self.cancel_read_slot(ReadSlot::Details);
-                                    self.cancel_read_slot(ReadSlot::HistoryDiff);
-                                    self.revision = None;
-                                    self.details = None;
-                                    self.history_file = None;
-                                    self.hdiff.clear();
-                                    self.history_diff_view = PreparedText::default();
-                                }
+                                self.apply_history_filter();
                             }
                             Err(e) => self.notice = Some(e),
                         }
@@ -1554,6 +1759,7 @@ impl MoaApp {
                             Ok(()) => {
                                 self.dialog = None;
                                 self.notice = Some("원격 주소를 변경했습니다.".into());
+                                self.refresh();
                                 self.request_remote()
                             }
                             Err(e) => self.notice = Some(e),
@@ -1563,12 +1769,10 @@ impl MoaApp {
                 Event::Done(g, label, r) => {
                     if self.finish(g) {
                         match r {
-                            Ok(v) => {
-                                self.log(format!("{label}: {v}"));
-                                self.refresh()
-                            }
+                            Ok(v) => self.log(format!("{label}: {v}")),
                             Err(e) => self.notice = Some(e),
                         }
+                        self.refresh();
                     }
                 }
                 Event::Conflict(g, path, r) => {
@@ -1883,15 +2087,6 @@ fn status(f: &FileChange) -> &str {
         "커밋 포함"
     } else {
         "수정"
-    }
-}
-fn relation(r: HistoryRelation) -> &'static str {
-    match r {
-        HistoryRelation::LocalOnly => "로컬만",
-        HistoryRelation::UpstreamOnly => "추적만",
-        HistoryRelation::Shared => "공통",
-        HistoryRelation::Other => "다른 이력",
-        _ => "—",
     }
 }
 fn short(s: &str) -> &str {

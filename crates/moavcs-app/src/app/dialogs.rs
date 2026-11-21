@@ -181,9 +181,9 @@ impl MoaApp {
                 BLUE,
             ),
             Operation::Push => (
-                "원격 저장소 보내기 확인",
-                "보내기 실행",
-                "현재 브랜치의 커밋을 설정된 원격 저장소로 전송합니다.",
+                if repo.kind == VcsKind::Git { "로컬 커밋 푸시" } else { "원격 저장소 보내기 확인" },
+                if repo.kind == VcsKind::Git { "푸시 실행" } else { "보내기 실행" },
+                "현재 브랜치에 기록한 커밋을 원격 저장소로 전송합니다. 작업 중인 파일 변경은 커밋 후에 공유할 수 있습니다.",
                 ACCENT,
             ),
             _ => return,
@@ -214,16 +214,23 @@ impl MoaApp {
                             .font(egui::TextStyle::Monospace)
                             .interactive(false),
                     );
-                    if operation == Operation::Push {
-                        let target = self
-                            .history
-                            .git
-                            .as_ref()
-                            .map(|history| history.push_target.as_str())
-                            .filter(|target| !target.is_empty())
-                            .unwrap_or(&repo.summary);
-                        ui.label(RichText::new("전송 대상").small().color(MUTED));
-                        ui.label(RichText::new(target).color(INK));
+                    if operation == Operation::Push && repo.kind == VcsKind::Git {
+                        ui.label(
+                            RichText::new("푸시 대상 · 마지막 확인")
+                                .small()
+                                .color(MUTED),
+                        );
+                        if let Some(git) = &self.git_sync {
+                            let (state, color) = git_sync::publication_state(git);
+                            if !git.push_target.is_empty() {
+                                ui.label(RichText::new(&git.push_target).color(INK));
+                            }
+                            ui.label(RichText::new(state).color(color));
+                        } else {
+                            ui.label("푸시 대상 미확인");
+                        }
+                    } else if operation == Operation::Push {
+                        ui.label(RichText::new(&repo.summary).color(INK));
                     }
                 });
                 ui.add_space(10.0);
