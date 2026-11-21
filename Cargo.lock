@@ -1755,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "moavcs-app"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "eframe",
  "embed-resource",
@@ -1770,7 +1770,7 @@ dependencies = [
 
 [[package]]
 name = "moavcs-core"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "quick-xml 0.42.0",
  "serde",
@@ -1781,7 +1781,7 @@ dependencies = [
 
 [[package]]
 name = "moavcs-shell"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "embed-resource",
  "moavcs-core",
