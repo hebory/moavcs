@@ -1,30 +1,23 @@
 use super::*;
 
+const RAIL_TEXT: Color32 = Color32::from_rgb(233, 244, 242);
+const RAIL_MUTED: Color32 = Color32::from_rgb(179, 201, 201);
+const RAIL_ACTIVE: Color32 = Color32::from_rgb(36, 76, 79);
+const RAIL_HOVER: Color32 = Color32::from_rgb(36, 61, 68);
+const RAIL_MARK: Color32 = Color32::from_rgb(117, 221, 190);
+
 impl MoaApp {
     pub(super) fn top(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("app_bar")
-            .exact_height(54.)
+            .exact_height(56.)
             .frame(
                 egui::Frame::none()
                     .fill(SURFACE)
-                    .inner_margin(egui::vec2(18., 10.)),
+                    .inner_margin(egui::vec2(18., 8.)),
             )
             .show(ctx, |ui| {
-                ui.add_enabled_ui(self.busy.is_none() && self.pending_sync.is_none(), |ui| {
+                ui.add_enabled_ui(!self.controls_locked(), |ui| {
                     ui.horizontal_centered(|ui| {
-                        let (r, _) =
-                            ui.allocate_exact_size(egui::vec2(27., 27.), egui::Sense::hover());
-                        ui.painter().rect_filled(r, 8., ACCENT);
-                        ui.painter().text(
-                            r.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "m",
-                            egui::FontId::proportional(23.),
-                            SURFACE,
-                        );
-                        ui.label(RichText::new("moa").size(21.).strong());
-                        ui.label(RichText::new("VCS").size(13.).color(MUTED));
-                        ui.add_space(20.);
                         ui.menu_button("저장소", |ui| {
                             if ui.button("저장소 열기…     Ctrl+O").clicked() {
                                 ui.close_menu();
@@ -89,11 +82,7 @@ impl MoaApp {
                                     ui.close_menu();
                                     self.inspect(true);
                                 }
-                                if self
-                                    .changes
-                                    .iter()
-                                    .any(|f| f.path == path && f.conflicted())
-                                    && ui.button("충돌 해결…").clicked()
+                                if self.selected_conflicted && ui.button("충돌 해결…").clicked()
                                 {
                                     ui.close_menu();
                                     self.open_conflict();
@@ -150,42 +139,58 @@ impl MoaApp {
 
     pub(super) fn sidebar(&mut self, ctx: &egui::Context) {
         let width = if ctx.screen_rect().width() < 1050. {
-            218.
+            184.
         } else {
-            238.
+            234.
         };
         egui::SidePanel::left("repositories")
             .exact_width(width)
             .resizable(false)
             .frame(egui::Frame::none().fill(NAVY).inner_margin(14.))
             .show(ctx, |ui| {
-                ui.add_enabled_ui(self.busy.is_none() && self.pending_sync.is_none(), |ui| {
-                    ui.add_space(9.);
-                    ui.label(
-                        RichText::new("내 작업")
-                            .color(Color32::from_rgb(133, 151, 175))
-                            .size(11.)
-                            .strong(),
+                ui.horizontal(|ui| {
+                    let (mark, _) =
+                        ui.allocate_exact_size(egui::vec2(34., 34.), egui::Sense::hover());
+                    ui.painter()
+                        .rect_filled(mark, 9., Color32::from_rgb(196, 72, 43));
+                    let font =
+                        egui::FontId::new(30., egui::FontFamily::Name("Moa Semibold".into()));
+                    ui.painter().text(
+                        mark.center() - egui::vec2(0., 2.),
+                        egui::Align2::CENTER_CENTER,
+                        "m",
+                        font,
+                        SURFACE,
                     );
-                    ui.add_space(5.);
-                    if nav_row(ui, "작업 공간", Icon::Changes, self.repo.is_some()) {
-                        self.tab = Tab::Changes;
-                    }
-                    if nav_row(ui, "저장소 열기", Icon::Folder, false) {
-                        self.pick_folder();
-                    }
-                    ui.add_space(22.);
+                    ui.label(heading("MoaVCS", 23.).color(RAIL_TEXT));
+                });
+                ui.add_enabled_ui(!self.controls_locked(), |ui| {
+                    ui.add_space(20.);
+                    ui.label(heading("작업 공간", 13.).color(RAIL_MUTED));
+                    ui.add_enabled_ui(self.repo.is_some(), |ui| {
+                        ui.spacing_mut().item_spacing.y = 3.;
+                        for (tab, name, icon) in [
+                            (Tab::Changes, "변경 파일", Icon::Changes),
+                            (Tab::History, "커밋 이력", Icon::History),
+                            (Tab::Output, "실행 기록", Icon::Output),
+                        ] {
+                            if nav_row(ui, name, icon, self.repo.is_some() && self.tab == tab) {
+                                self.tab = tab;
+                                if tab == Tab::History {
+                                    self.load_history();
+                                }
+                            }
+                        }
+                    });
+                    ui.add_space(14.);
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("저장소")
-                                .color(Color32::from_rgb(177, 191, 212))
-                                .size(12.)
-                                .strong(),
-                        );
+                        ui.label(heading("저장소", 13.).color(RAIL_MUTED));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
                             ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
-                            ui.menu_button(RichText::new("…").color(MUTED), |ui| {
+                            ui.visuals_mut().widgets.hovered.weak_bg_fill = RAIL_HOVER;
+                            ui.visuals_mut().widgets.open.weak_bg_fill = RAIL_ACTIVE;
+                            ui.menu_button(RichText::new("…").color(RAIL_TEXT), |ui| {
                                 if ui.button("고정 항목을 남기고 최근 기록 비우기").clicked()
                                 {
                                     match self.settings_store.clear_recent() {
@@ -198,21 +203,22 @@ impl MoaApp {
                         });
                     });
                     ui.scope(|ui| {
-                        ui.visuals_mut().override_text_color =
-                            Some(Color32::from_rgb(221, 230, 243));
-                        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(32, 47, 66);
+                        ui.visuals_mut().override_text_color = Some(RAIL_TEXT);
+                        ui.visuals_mut().extreme_bg_color = RAIL_HOVER;
                         ui.visuals_mut().widgets.inactive.bg_stroke =
-                            egui::Stroke::new(1.0_f32, Color32::from_rgb(53, 70, 93));
+                            egui::Stroke::new(1.0_f32, Color32::from_rgb(79, 107, 112));
+                        ui.visuals_mut().selection.bg_fill = RAIL_ACTIVE;
+                        ui.visuals_mut().selection.stroke = egui::Stroke::new(1.0_f32, RAIL_MARK);
+                        ui.visuals_mut().text_cursor.stroke = egui::Stroke::new(1.5_f32, RAIL_MARK);
                         ui.add_sized(
-                            [ui.available_width(), 32.],
+                            [ui.available_width(), 36.],
                             TextEdit::singleline(&mut self.query)
                                 .id_salt("sidebar_search")
-                                .hint_text("저장소 검색")
+                                .hint_text(RichText::new("저장소 검색").color(RAIL_MUTED))
                                 .margin(egui::vec2(10., 7.)),
                         );
                     });
-                    ui.add_space(10.);
-                    let footer = ui.max_rect().bottom() - 54.;
+                    let footer = ui.max_rect().bottom() - 48.;
                     ScrollArea::vertical()
                         .id_salt("sidebar_repositories")
                         .max_height((footer - ui.cursor().top()).max(50.))
@@ -242,8 +248,8 @@ impl MoaApp {
                                 ui.add_space(6.);
                                 ui.label(
                                     RichText::new(if pin { "고정됨" } else { "최근 열기" })
-                                        .size(10.5)
-                                        .color(Color32::from_rgb(128, 147, 174)),
+                                        .size(13.)
+                                        .color(RAIL_MUTED),
                                 );
                                 for r in items {
                                     let path = Path::new(&r.path);
@@ -261,7 +267,7 @@ impl MoaApp {
                                         .as_ref()
                                         .is_some_and(|repo| repo.root == PathBuf::from(&r.path));
                                     let (rect, response) = ui.allocate_exact_size(
-                                        egui::vec2(ui.available_width(), 58.),
+                                        egui::vec2(ui.available_width(), 62.),
                                         egui::Sense::click(),
                                     );
                                     response.widget_info(|| {
@@ -276,11 +282,7 @@ impl MoaApp {
                                         ui.painter().rect_filled(
                                             rect,
                                             7.,
-                                            if selected {
-                                                Color32::from_rgb(39, 61, 86)
-                                            } else {
-                                                Color32::from_rgb(31, 46, 65)
-                                            },
+                                            if selected { RAIL_ACTIVE } else { RAIL_HOVER },
                                         );
                                     }
                                     if selected {
@@ -290,7 +292,7 @@ impl MoaApp {
                                                 egui::vec2(3., 28.),
                                             ),
                                             2.,
-                                            Color32::from_rgb(234, 118, 82),
+                                            RAIL_MARK,
                                         );
                                     }
                                     draw_icon(
@@ -300,27 +302,27 @@ impl MoaApp {
                                             egui::vec2(19., 19.),
                                         ),
                                         if pin { Icon::Pin } else { Icon::Folder },
-                                        Color32::from_rgb(150, 174, 204),
+                                        RAIL_MUTED,
                                     );
                                     line_text(
                                         ui,
                                         egui::Rect::from_min_size(
                                             rect.min + egui::vec2(35., 9.),
-                                            egui::vec2(rect.width() - 72., 20.),
+                                            egui::vec2(rect.width() - 69., 22.),
                                         ),
                                         name,
-                                        13.5,
-                                        Color32::from_rgb(229, 236, 246),
+                                        15.,
+                                        RAIL_TEXT,
                                     );
                                     line_text(
                                         ui,
                                         egui::Rect::from_min_size(
                                             rect.min + egui::vec2(35., 31.),
-                                            egui::vec2(rect.width() - 47., 17.),
+                                            egui::vec2(rect.width() - 44., 22.),
                                         ),
                                         &format!("{} · {}", r.vcs_kind.name(), parent),
-                                        10.5,
-                                        Color32::from_rgb(142, 160, 184),
+                                        13.,
+                                        RAIL_MUTED,
                                     );
                                     response.clone().on_hover_text(&r.path);
                                     let menu_rect = egui::Rect::from_min_size(
@@ -337,8 +339,12 @@ impl MoaApp {
                                                 Color32::TRANSPARENT;
                                             ui.visuals_mut().widgets.inactive.bg_stroke =
                                                 egui::Stroke::NONE;
+                                            ui.visuals_mut().widgets.hovered.weak_bg_fill =
+                                                RAIL_HOVER;
+                                            ui.visuals_mut().widgets.open.weak_bg_fill =
+                                                RAIL_ACTIVE;
                                             let menu = ui.menu_button(
-                                                RichText::new("…").color(MUTED),
+                                                RichText::new("…").color(RAIL_TEXT),
                                                 |ui| {
                                                     if ui
                                                         .button(if r.is_pinned {
@@ -392,26 +398,19 @@ impl MoaApp {
                                     } else {
                                         "검색 결과가 없습니다."
                                     })
-                                    .size(12.)
-                                    .color(Color32::from_rgb(142, 160, 184)),
+                                    .size(13.)
+                                    .color(RAIL_MUTED),
                                 );
                             }
                         });
                     let bottom = egui::Rect::from_min_max(
-                        egui::pos2(ui.min_rect().left(), footer + 12.),
-                        egui::pos2(ui.max_rect().right(), footer + 50.),
+                        egui::pos2(ui.min_rect().left(), footer + 6.),
+                        ui.max_rect().max,
                     );
                     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bottom), |ui| {
-                        ui.label(
-                            RichText::new("한곳에 모으다.")
-                                .color(Color32::from_rgb(166, 185, 209))
-                                .size(12.),
-                        );
-                        ui.label(
-                            RichText::new(concat!("MoaVCS  ", env!("CARGO_PKG_VERSION")))
-                                .color(Color32::from_rgb(100, 124, 153))
-                                .size(10.5),
-                        );
+                        if nav_row(ui, "저장소 열기", Icon::Folder, false) {
+                            self.pick_folder();
+                        }
                     });
                 });
             });
@@ -421,7 +420,7 @@ impl MoaApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(BG).inner_margin(20.))
             .show(ctx, |ui| {
-                if self.busy.is_some() || self.pending_sync.is_some() {
+                if self.controls_locked() {
                     ui.disable();
                 }
                 if let Some(repo) = self.repo.clone() {
@@ -444,6 +443,9 @@ impl MoaApp {
                         .on_hover_text(title);
                         pill(ui, repo.kind.name(), BLUE);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if self.is_loading() {
+                                pill(ui, "정보를 불러오는 중", BLUE);
+                            }
                             pill(
                                 ui,
                                 &if self.changes.is_empty() {
@@ -486,38 +488,7 @@ impl MoaApp {
                             }
                         });
                     });
-                    ui.add_space(10.);
-                    ui.horizontal(|ui| {
-                        for (tab, name) in [
-                            (Tab::Changes, "변경 파일"),
-                            (Tab::History, "커밋 이력"),
-                            (Tab::Output, "실행 기록"),
-                        ] {
-                            let active = self.tab == tab;
-                            let text = RichText::new(name)
-                                .color(if active { BLUE } else { MUTED })
-                                .strong();
-                            if ui
-                                .add(
-                                    egui::Button::new(text)
-                                        .fill(if active {
-                                            Color32::from_rgb(231, 238, 250)
-                                        } else {
-                                            Color32::TRANSPARENT
-                                        })
-                                        .stroke(egui::Stroke::NONE)
-                                        .min_size(egui::vec2(96., 34.)),
-                                )
-                                .clicked()
-                            {
-                                self.tab = tab;
-                                if tab == Tab::History {
-                                    self.load_history();
-                                }
-                            }
-                        }
-                    });
-                    ui.add_space(10.);
+                    ui.add_space(8.);
                     if let Some(notice) = self.notice.clone() {
                         let (r, response) = ui.allocate_exact_size(
                             egui::vec2(ui.available_width(), 38.),
@@ -566,8 +537,13 @@ impl MoaApp {
                         Tab::Output => {
                             surface().show(ui, |ui| {
                                 section(ui, "실행 기록", "저장소 작업의 결과와 오류를 확인합니다.");
-                                let text = self.logs.join("\n\n");
-                                code_view(ui, "workspace_log", &text, ui.available_height() - 10.);
+                                code_view_prepared(
+                                    ui,
+                                    "workspace_log",
+                                    &self.logs_text,
+                                    &self.logs_view,
+                                    ui.available_height() - 10.,
+                                );
                             });
                         }
                     }
@@ -614,15 +590,15 @@ impl MoaApp {
             "changes_split",
             area,
             &mut self.worktree_split,
-            240.,
-            270.,
+            220.,
+            250.,
         );
-        let composer_h = if area.height() < 330. {
-            132.
-        } else if area.height() < 430. {
-            144.
+        let composer_h = if area.height() < 390. {
+            138.
+        } else if area.height() < 500. {
+            150.
         } else {
-            208.
+            162.
         };
         let files_rect = egui::Rect::from_min_max(
             left.min,
@@ -638,15 +614,19 @@ impl MoaApp {
             .as_ref()
             .map(|p| p.capabilities())
             .unwrap_or_default();
+        let vcs_kind = self.repo.as_ref().map(|repo| repo.kind).unwrap_or_default();
         panel(ui, files_rect, 12., |ui| {
             ui.horizontal(|ui| {
-                ui.strong("변경 파일");
+                ui.label(heading("변경 파일", 16.));
                 pill(ui, &self.changes.len().to_string(), MUTED);
             });
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if cap.stage
                     && ui
-                        .add_enabled(!self.picked.is_empty(), egui::Button::new("포함").small())
+                        .add_enabled(
+                            !self.picked.is_empty(),
+                            egui::Button::new("포함").min_size(egui::vec2(58., 32.)),
+                        )
                         .on_hover_text("선택한 파일을 커밋에 포함합니다")
                         .clicked()
                 {
@@ -658,7 +638,10 @@ impl MoaApp {
                 }
                 if cap.unstage
                     && ui
-                        .add_enabled(!self.picked.is_empty(), egui::Button::new("제외").small())
+                        .add_enabled(
+                            !self.picked.is_empty(),
+                            egui::Button::new("제외").min_size(egui::vec2(58., 32.)),
+                        )
                         .on_hover_text("선택한 파일의 포함을 해제합니다")
                         .clicked()
                 {
@@ -670,7 +653,7 @@ impl MoaApp {
                 }
                 ui.label(
                     RichText::new(format!("{}개 선택", self.picked.len()))
-                        .size(11.)
+                        .size(13.)
                         .color(MUTED),
                 );
             });
@@ -683,18 +666,23 @@ impl MoaApp {
                     Icon::Check,
                 );
             } else {
+                let changes = &self.changes;
+                let picked = &mut self.picked;
+                let selected_file = self.file.as_deref();
+                let mut file_to_select = None;
+                ui.spacing_mut().item_spacing.y = 0.;
                 ScrollArea::vertical()
                     .id_salt("changes_file_list")
                     .auto_shrink([false, false])
                     .max_height(ui.available_height())
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 4.;
-                        for f in self.changes.clone() {
+                    .show_rows(ui, 44., changes.len(), |ui, rows| {
+                        for index in rows {
+                            let f = &changes[index];
                             let (r, response) = ui.allocate_exact_size(
-                                egui::vec2(ui.available_width(), 53.),
+                                egui::vec2(ui.available_width(), 44.),
                                 egui::Sense::click(),
                             );
-                            let selected = self.file.as_deref() == Some(&f.path);
+                            let selected = selected_file == Some(&f.path);
                             response.widget_info(|| {
                                 egui::WidgetInfo::selected(
                                     egui::WidgetType::SelectableLabel,
@@ -707,54 +695,50 @@ impl MoaApp {
                                 ui.painter().rect_filled(
                                     r,
                                     6.,
-                                    if selected {
-                                        Color32::from_rgb(233, 240, 251)
-                                    } else {
-                                        BG
-                                    },
+                                    if selected { SELECTED } else { BG },
                                 );
                             }
-                            let mut included = self.picked.contains(&f.path);
+                            let mut included = picked.contains(&f.path);
                             let check = ui.put(
                                 egui::Rect::from_min_size(
-                                    r.min + egui::vec2(6., 14.),
-                                    egui::vec2(18., 24.),
+                                    r.min + egui::vec2(5., 8.),
+                                    egui::vec2(28., 28.),
                                 ),
                                 egui::Checkbox::without_text(&mut included),
                             );
                             if check.changed() {
                                 if included {
-                                    self.picked.insert(f.path.clone());
+                                    picked.insert(f.path.clone());
                                 } else {
-                                    self.picked.remove(&f.path);
+                                    picked.remove(&f.path);
                                 }
                             }
                             let color = change_color(&f);
                             let tag = egui::Rect::from_min_size(
-                                r.min + egui::vec2(33., 17.),
-                                egui::vec2(20., 20.),
+                                r.min + egui::vec2(38., 11.),
+                                egui::vec2(22., 22.),
                             );
                             ui.painter()
                                 .rect_filled(tag, 4., color.gamma_multiply(0.12));
                             ui.painter().text(
                                 tag.center(),
                                 egui::Align2::CENTER_CENTER,
-                                change_letter(&f),
-                                egui::FontId::monospace(11.5),
+                                change_letter(&f, vcs_kind),
+                                egui::FontId::monospace(13.),
                                 color,
                             );
                             let path = Path::new(&f.path);
                             let name = path.file_name().and_then(|s| s.to_str()).unwrap_or(&f.path);
-                            let x = r.left() + 61.;
+                            let x = r.left() + 68.;
                             let width = (r.right() - x - 4.).max(20.);
                             line_text(
                                 ui,
                                 egui::Rect::from_min_size(
-                                    egui::pos2(x, r.top() + 8.),
-                                    egui::vec2(width, 19.),
+                                    egui::pos2(x, r.top() + 1.),
+                                    egui::vec2(width, 22.),
                                 ),
                                 name,
-                                13.,
+                                15.,
                                 INK,
                             );
                             let parent =
@@ -762,28 +746,31 @@ impl MoaApp {
                             line_text(
                                 ui,
                                 egui::Rect::from_min_size(
-                                    egui::pos2(x, r.top() + 29.),
-                                    egui::vec2(width, 17.),
+                                    egui::pos2(x, r.top() + 23.),
+                                    egui::vec2(width, 18.),
                                 ),
                                 &format!(
                                     "{}{}",
-                                    status(&f),
+                                    workspace_status(&f, vcs_kind),
                                     if parent.is_empty() {
                                         String::new()
                                     } else {
                                         format!(" · {parent}")
                                     }
                                 ),
-                                10.5,
+                                13.,
                                 MUTED,
                             );
                             response.clone().on_hover_text(&f.path);
                             if response.clicked() && !check.clicked() {
-                                self.select_file(f.path.clone());
+                                file_to_select = Some(f.path.clone());
                             }
                             ui.advance_cursor_after_rect(r);
                         }
                     });
+                if let Some(path) = file_to_select {
+                    self.select_file(path);
+                }
             }
         });
         panel(ui, composer, 12., |ui| {
@@ -795,13 +782,13 @@ impl MoaApp {
                 );
                 ui.label(
                     RichText::new("이 화면에서는 변경 내용과 파일 이력을 검토할 수 있습니다.")
-                        .size(11.5)
+                        .size(13.)
                         .color(MUTED),
                 );
                 return;
             }
-            ui.strong("변경 기록");
-            if composer.height() > 190. {
+            ui.label(heading("변경 기록", 16.));
+            if composer.height() > 176. {
                 ui.label(
                     RichText::new(
                         if self.repo.as_ref().is_some_and(|r| r.kind == VcsKind::Svn) {
@@ -810,7 +797,7 @@ impl MoaApp {
                             "포함된 모든 변경을 커밋합니다."
                         },
                     )
-                    .size(11.)
+                    .size(13.)
                     .color(MUTED),
                 );
             }
@@ -836,28 +823,31 @@ impl MoaApp {
                                 .hint_text("변경 내용을 설명하세요")
                                 .desired_rows(2)
                                 .desired_width(editor.width())
-                                .margin(egui::vec2(
-                                    8.,
-                                    if composer.height() < 144. { 4. } else { 8. },
-                                )),
+                                .font(egui::FontId::proportional(15.))
+                                .margin(egui::vec2(10., 7.)),
                         );
                     });
             });
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(footer), |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(if self.changes.iter().any(FileChange::conflicted) {
-                            "충돌 해결 필요"
+                        RichText::new(if self.has_conflicts {
+                            "충돌 해결 필요".to_owned()
+                        } else if self
+                            .repo
+                            .as_ref()
+                            .is_some_and(|repo| repo.kind == VcsKind::Svn)
+                        {
+                            format!("제출 대상 {}개", self.picked.len())
                         } else {
-                            "로컬 변경 기록"
+                            format!("커밋 포함 {}개", self.staged_file_count)
                         })
-                        .size(10.5)
+                        .size(13.)
                         .color(MUTED),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let enabled = cap.commit
-                            && !self.message.trim().is_empty()
-                            && !self.changes.iter().any(FileChange::conflicted);
+                        let enabled =
+                            cap.commit && !self.message.trim().is_empty() && !self.has_conflicts;
                         if ui
                             .add_enabled_ui(enabled, |ui| primary(ui, "커밋"))
                             .inner
@@ -878,22 +868,29 @@ impl MoaApp {
             ui.horizontal(|ui| {
                 draw_small_icon(ui, Icon::Diff, BLUE);
                 ui.add(
-                    egui::Label::new(
-                        RichText::new(self.file.as_deref().unwrap_or("변경 미리 보기")).strong(),
-                    )
+                    egui::Label::new(heading(
+                        self.file.as_deref().unwrap_or("변경 미리 보기"),
+                        16.,
+                    ))
                     .truncate(),
                 )
                 .on_hover_text(self.file.as_deref().unwrap_or_default());
             });
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .add_enabled(self.file.is_some(), egui::Button::new("좌우 비교").small())
+                    .add_enabled(
+                        self.file.is_some(),
+                        egui::Button::new("좌우 비교").min_size(egui::vec2(88., 32.)),
+                    )
                     .clicked()
                 {
                     self.inspect(false);
                 }
                 if ui
-                    .add_enabled(self.file.is_some(), egui::Button::new("Blame").small())
+                    .add_enabled(
+                        self.file.is_some(),
+                        egui::Button::new("Blame").min_size(egui::vec2(72., 32.)),
+                    )
                     .clicked()
                 {
                     self.inspect(true);
@@ -911,21 +908,31 @@ impl MoaApp {
             ui.separator();
             ui.add_space(4.);
             if self.diff.is_empty() {
-                empty(
-                    ui,
-                    "표시할 차이가 없습니다",
-                    if self.file.is_some() {
-                        "커밋 포함 여부를 바꾸거나 다른 파일을 선택하세요."
-                    } else {
-                        "왼쪽에서 파일을 선택해 변경 내용을 확인하세요."
-                    },
-                    Icon::Diff,
-                );
+                if self.read_slots.contains_key(&ReadSlot::Diff) {
+                    empty(
+                        ui,
+                        "차이를 불러오는 중",
+                        "비교가 끝나면 이곳에 표시됩니다. 다른 파일과 작업 공간은 계속 사용할 수 있습니다.",
+                        Icon::Refresh,
+                    );
+                } else {
+                    empty(
+                        ui,
+                        "표시할 차이가 없습니다",
+                        if self.file.is_some() {
+                            "커밋 포함 여부를 바꾸거나 다른 파일을 선택하세요."
+                        } else {
+                            "왼쪽에서 파일을 선택해 변경 내용을 확인하세요."
+                        },
+                        Icon::Diff,
+                    );
+                }
             } else {
-                code_view(
+                code_view_prepared(
                     ui,
                     "changes_diff_preview",
                     &self.diff,
+                    &self.diff_view,
                     ui.available_height(),
                 );
             }
@@ -933,7 +940,8 @@ impl MoaApp {
     }
 
     pub(super) fn history_ui(&mut self, ui: &mut egui::Ui) {
-        if let Some(g) = self.history.git.clone() {
+        let mut reload_history = false;
+        if let Some(g) = self.history.git.as_ref() {
             egui::Frame::none()
                 .fill(SURFACE)
                 .stroke(egui::Stroke::new(1.0_f32, BORDER))
@@ -952,7 +960,7 @@ impl MoaApp {
                                     &g.upstream
                                 }
                             ))
-                            .size(12.),
+                            .size(13.),
                         );
                         if let (Some(a), Some(b)) = (g.ahead, g.behind) {
                             pill(
@@ -970,12 +978,13 @@ impl MoaApp {
                                     &g.push_target
                                 }
                             ))
-                            .size(11.)
+                            .size(13.)
                             .color(MUTED),
                         );
                     });
                     ui.horizontal_wrapped(|ui| {
-                        ui.small(RichText::new("마지막 Fetch 기준").color(MUTED));
+                        ui.spacing_mut().interact_size.y = 32.;
+                        ui.label(RichText::new("마지막 Fetch 기준").size(13.).color(MUTED));
                         let old = self.scope;
                         ui.selectable_value(
                             &mut self.scope,
@@ -988,11 +997,14 @@ impl MoaApp {
                             "모든 브랜치",
                         );
                         if self.scope != old {
-                            self.load_history();
+                            reload_history = true;
                         }
                     });
                 });
             ui.add_space(10.);
+        }
+        if reload_history {
+            self.load_history();
         }
         let area = ui.available_rect_before_wrap();
         ui.allocate_rect(area, egui::Sense::hover());
@@ -1001,24 +1013,39 @@ impl MoaApp {
             "history_split",
             area,
             &mut self.history_split,
+            230.,
             250.,
-            285.,
         );
+        let mut requested_commit = None;
+        let graph_width = self.history_graph.column_width();
         panel(ui, left, 10., |ui| {
             ui.horizontal(|ui| {
-                ui.strong("커밋");
+                ui.label(heading("커밋", 16.));
                 pill(ui, &self.history.entries.len().to_string(), MUTED);
             });
             ui.add_space(6.);
+            if self.history.entries.is_empty() {
+                if self.read_slots.contains_key(&ReadSlot::History) {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("커밋 이력을 불러오는 중…");
+                    });
+                } else {
+                    ui.label("표시할 커밋이 없습니다.");
+                }
+                return;
+            }
+            ui.spacing_mut().item_spacing.y = 0.;
             ScrollArea::vertical()
                 .id_salt("history_commit_list")
                 .auto_shrink([false, false])
                 .max_height(ui.available_height())
-                .show(ui, |ui| {
+                .show_rows(ui, 76., self.history.entries.len(), |ui, rows| {
                     ui.spacing_mut().item_spacing.y = 0.;
-                    for entry in self.history.entries.clone() {
+                    for index in rows {
+                        let entry = &self.history.entries[index];
                         let (r, response) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), 82.),
+                            egui::vec2(ui.available_width(), 76.),
                             egui::Sense::click(),
                         );
                         let selected = self.revision.as_deref() == Some(&entry.id);
@@ -1031,44 +1058,34 @@ impl MoaApp {
                             )
                         });
                         if selected || response.hovered() || response.has_focus() {
-                            ui.painter().rect_filled(
-                                r,
-                                6.,
-                                if selected {
-                                    Color32::from_rgb(233, 240, 251)
-                                } else {
-                                    BG
-                                },
-                            );
+                            ui.painter()
+                                .rect_filled(r, 6., if selected { SELECTED } else { BG });
                         }
-                        let graph = egui::Rect::from_min_size(
-                            r.min,
-                            egui::vec2(self.history_graph.column_width(), 82.),
-                        );
+                        let graph = egui::Rect::from_min_size(r.min, egui::vec2(graph_width, 76.));
                         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(graph), |ui| {
                             ui.set_clip_rect(graph.intersect(ui.clip_rect()));
-                            self.history_graph.paint_row(ui, &entry.id, 82.);
+                            self.history_graph.paint_row(ui, &entry.id, 76.);
                         });
-                        let x = r.left() + self.history_graph.column_width() + 3.;
+                        let x = r.left() + graph_width + 3.;
                         let width = (r.right() - x - 8.).max(40.);
                         line_text(
                             ui,
                             egui::Rect::from_min_size(
-                                egui::pos2(x, r.top() + 9.),
-                                egui::vec2(width, 21.),
+                                egui::pos2(x, r.top() + 8.),
+                                egui::vec2(width, 23.),
                             ),
                             entry.summary(),
-                            13.,
+                            15.,
                             INK,
                         );
                         line_text(
                             ui,
                             egui::Rect::from_min_size(
-                                egui::pos2(x, r.top() + 33.),
-                                egui::vec2(width, 17.),
+                                egui::pos2(x, r.top() + 31.),
+                                egui::vec2(width, 19.),
                             ),
                             &format!("{} · {}", short(&entry.id), entry.author),
-                            11.,
+                            13.,
                             MUTED,
                         );
                         let refs = entry
@@ -1080,8 +1097,8 @@ impl MoaApp {
                         line_text(
                             ui,
                             egui::Rect::from_min_size(
-                                egui::pos2(x, r.top() + 55.),
-                                egui::vec2(width, 17.),
+                                egui::pos2(x, r.top() + 53.),
+                                egui::vec2(width, 19.),
                             ),
                             &format!(
                                 "{}{}",
@@ -1092,7 +1109,7 @@ impl MoaApp {
                                     format!("   {refs}")
                                 }
                             ),
-                            10.5,
+                            13.,
                             BLUE,
                         );
                         response.clone().on_hover_text(format!(
@@ -1100,21 +1117,30 @@ impl MoaApp {
                             entry.message, entry.author, entry.date
                         ));
                         if response.clicked() {
-                            self.load_details(&entry);
+                            requested_commit = Some(entry.id.clone());
                         }
                     }
                 });
         });
+        if let Some(id) = requested_commit {
+            if let Some(entry) = self
+                .history
+                .entries
+                .iter()
+                .find(|entry| entry.id == id)
+                .cloned()
+            {
+                self.load_details(&entry);
+            }
+        }
+        let mut requested_history_file = None;
         panel(ui, right, 14., |ui| {
-            if let Some(detail) = self.details.clone() {
+            if let Some(detail) = self.details.as_ref() {
                 if right.height() < 380. {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         pill(ui, short(&detail.entry.id), BLUE);
-                        ui.add(
-                            egui::Label::new(RichText::new(detail.entry.summary()).strong())
-                                .truncate(),
-                        )
-                        .on_hover_text(&detail.entry.message);
+                        ui.add(egui::Label::new(heading(detail.entry.summary(), 15.)).truncate())
+                            .on_hover_text(&detail.entry.message);
                     });
                     ui.add(
                         egui::Label::new(
@@ -1122,7 +1148,7 @@ impl MoaApp {
                                 "{} · {}",
                                 detail.entry.author, detail.entry.date
                             ))
-                            .size(10.5)
+                            .size(13.)
                             .color(MUTED),
                         )
                         .truncate(),
@@ -1144,58 +1170,62 @@ impl MoaApp {
                         ))
                         .show_ui(ui, |ui| {
                             ui.set_max_width(400.);
-                            for file in &detail.files {
-                                if ui
-                                    .selectable_label(
-                                        self.history_file.as_deref() == Some(&file.path),
-                                        &file.path,
-                                    )
-                                    .clicked()
-                                {
-                                    if let Some(id) = self.revision.clone() {
-                                        self.load_hdiff(&id, file);
+                            ScrollArea::vertical().max_height(320.).show_rows(
+                                ui,
+                                28.,
+                                detail.files.len(),
+                                |ui, rows| {
+                                    for index in rows {
+                                        let file = &detail.files[index];
+                                        if ui
+                                            .selectable_label(
+                                                self.history_file.as_deref() == Some(&file.path),
+                                                &file.path,
+                                            )
+                                            .clicked()
+                                        {
+                                            requested_history_file = Some(file.path.clone());
+                                        }
                                     }
-                                }
-                            }
+                                },
+                            );
                         });
                     ui.add(
                         egui::Label::new(
                             RichText::new(&detail.comparison_label)
-                                .size(10.5)
+                                .size(13.)
                                 .color(MUTED),
                         )
                         .truncate(),
                     );
                     if !self.hdiff.is_empty() {
-                        code_view(
+                        code_view_prepared(
                             ui,
                             "history_compact_diff",
                             &self.hdiff,
+                            &self.history_diff_view,
                             ui.available_height(),
                         );
                     }
                     return;
                 }
 
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     pill(ui, short(&detail.entry.id), BLUE);
                     if ui
-                        .small_button("복사")
+                        .add(egui::Button::new("복사").min_size(egui::vec2(64., 32.)))
                         .on_hover_text("전체 커밋 ID 복사")
                         .clicked()
                     {
                         ui.output_mut(|o| o.copied_text = detail.entry.id.clone());
                     }
                 });
-                ui.add(
-                    egui::Label::new(RichText::new(detail.entry.summary()).size(16.).strong())
-                        .truncate(),
-                )
-                .on_hover_text(&detail.entry.message);
+                ui.add(egui::Label::new(heading(detail.entry.summary(), 18.)).truncate())
+                    .on_hover_text(&detail.entry.message);
                 ui.add(
                     egui::Label::new(
                         RichText::new(format!("{}  ·  {}", detail.entry.author, detail.entry.date))
-                            .size(11.5)
+                            .size(13.)
                             .color(MUTED),
                     )
                     .truncate(),
@@ -1215,18 +1245,18 @@ impl MoaApp {
                         .max_height(75.)
                         .show(ui, |ui| {
                             ui.add(
-                                egui::Label::new(RichText::new(&detail.entry.message).size(12.))
+                                egui::Label::new(RichText::new(&detail.entry.message).size(15.))
                                     .wrap(),
                             );
                         });
                 }
                 ui.add_space(3.);
                 ui.separator();
-                ui.horizontal(|ui| {
-                    ui.strong(format!("{}개 파일 변경", detail.files.len()));
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(heading(format!("{}개 파일 변경", detail.files.len()), 15.));
                     ui.label(
                         RichText::new("파일을 선택해 Diff 확인")
-                            .size(10.5)
+                            .size(13.)
                             .color(MUTED),
                     );
                 });
@@ -1235,33 +1265,31 @@ impl MoaApp {
                 } else {
                     102.
                 };
+                ui.spacing_mut().item_spacing.y = 0.;
                 ScrollArea::vertical()
                     .id_salt("history_detail_files")
                     .max_height(max_list_h)
                     .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        for file in detail.files.clone() {
+                    .show_rows(ui, 36., detail.files.len(), |ui, rows| {
+                        for index in rows {
+                            let file = &detail.files[index];
                             let selected = self.history_file.as_deref() == Some(&file.path);
                             let (r, response) = ui.allocate_exact_size(
-                                egui::vec2(ui.available_width(), 28.),
+                                egui::vec2(ui.available_width(), 36.),
                                 egui::Sense::click(),
                             );
                             if selected || response.hovered() || response.has_focus() {
                                 ui.painter().rect_filled(
                                     r,
                                     4.,
-                                    if selected {
-                                        Color32::from_rgb(233, 240, 251)
-                                    } else {
-                                        BG
-                                    },
+                                    if selected { SELECTED } else { BG },
                                 );
                             }
                             draw_icon(
                                 ui.painter(),
                                 egui::Rect::from_min_size(
-                                    r.min + egui::vec2(4., 5.),
-                                    egui::vec2(17., 17.),
+                                    r.min + egui::vec2(7., 9.),
+                                    egui::vec2(18., 18.),
                                 ),
                                 Icon::File,
                                 change_color(&file),
@@ -1269,18 +1297,16 @@ impl MoaApp {
                             line_text(
                                 ui,
                                 egui::Rect::from_min_size(
-                                    r.min + egui::vec2(28., 5.),
-                                    egui::vec2(r.width() - 34., 19.),
+                                    r.min + egui::vec2(32., 7.),
+                                    egui::vec2((r.width() - 40.).max(1.), 22.),
                                 ),
                                 &file.path,
-                                12.,
+                                13.,
                                 INK,
                             );
                             response.clone().on_hover_text(&file.path);
                             if response.clicked() {
-                                if let Some(id) = self.revision.clone() {
-                                    self.load_hdiff(&id, &file);
-                                }
+                                requested_history_file = Some(file.path.clone());
                             }
                         }
                     });
@@ -1288,7 +1314,7 @@ impl MoaApp {
                 ui.add(
                     egui::Label::new(
                         RichText::new(&detail.comparison_label)
-                            .size(10.5)
+                            .size(13.)
                             .color(MUTED),
                     )
                     .truncate(),
@@ -1296,29 +1322,57 @@ impl MoaApp {
                 .on_hover_text(&detail.comparison_label);
                 ui.separator();
                 if self.hdiff.is_empty() {
-                    empty(
-                        ui,
-                        "파일의 변경 내용을 확인하세요",
-                        "위 목록에서 파일을 선택하세요.",
-                        Icon::Diff,
-                    );
+                    if self.read_slots.contains_key(&ReadSlot::HistoryDiff) {
+                        empty(
+                            ui,
+                            "파일 비교를 불러오는 중",
+                            "커밋 파일 목록과 다른 화면은 계속 사용할 수 있습니다.",
+                            Icon::Refresh,
+                        );
+                    } else {
+                        empty(
+                            ui,
+                            "파일의 변경 내용을 확인하세요",
+                            "위 목록에서 파일을 선택하세요.",
+                            Icon::Diff,
+                        );
+                    }
                 } else {
-                    code_view(
+                    code_view_prepared(
                         ui,
                         "history_detail_diff",
                         &self.hdiff,
+                        &self.history_diff_view,
                         ui.available_height(),
                     );
                 }
             } else {
-                empty(
-                    ui,
-                    "커밋을 선택하세요",
-                    "작성자, 전체 메시지와 파일별 변경 내용을 확인합니다.",
-                    Icon::History,
-                );
+                if self.read_slots.contains_key(&ReadSlot::Details) {
+                    empty(
+                        ui,
+                        "커밋 세부 정보를 불러오는 중",
+                        "커밋 목록을 계속 탐색할 수 있습니다.",
+                        Icon::Refresh,
+                    );
+                } else {
+                    empty(
+                        ui,
+                        "커밋을 선택하세요",
+                        "작성자, 전체 메시지와 파일별 변경 내용을 확인합니다.",
+                        Icon::History,
+                    );
+                }
             }
         });
+        if let (Some(path), Some(revision), Some(detail)) = (
+            requested_history_file,
+            self.revision.clone(),
+            self.details.as_ref(),
+        ) {
+            if let Some(file) = detail.files.iter().find(|file| file.path == path).cloned() {
+                self.load_hdiff(&revision, &file);
+            }
+        }
     }
 }
 
@@ -1389,7 +1443,10 @@ fn change_color(f: &FileChange) -> Color32 {
         BLUE
     }
 }
-fn change_letter(f: &FileChange) -> &'static str {
+fn change_letter(f: &FileChange, vcs_kind: VcsKind) -> &'static str {
+    if vcs_kind == VcsKind::Git {
+        return git_change_letter(f);
+    }
     if f.conflicted() {
         "!"
     } else if f.status.to_lowercase().contains("renam") || f.status == "R" {
@@ -1404,6 +1461,87 @@ fn change_letter(f: &FileChange) -> &'static str {
         "A"
     } else {
         "M"
+    }
+}
+
+#[cfg(test)]
+mod workspace_status_tests {
+    use super::*;
+
+    fn file(status: &str, index_status: &str, worktree_status: &str) -> FileChange {
+        FileChange {
+            status: status.into(),
+            index_status: index_status.into(),
+            worktree_status: worktree_status.into(),
+            ..FileChange::default()
+        }
+    }
+
+    #[test]
+    fn git_staged_only_and_mixed_changes_have_clear_labels() {
+        let staged = file("staged", "M", "");
+        assert_eq!(change_letter(&staged, VcsKind::Git), "M");
+        assert_eq!(workspace_status(&staged, VcsKind::Git), "커밋 포함");
+
+        let mixed = file("modified", "A", "M");
+        assert_eq!(change_letter(&mixed, VcsKind::Git), "A");
+        assert_eq!(workspace_status(&mixed, VcsKind::Git), "일부 포함");
+    }
+
+    #[test]
+    fn git_status_badges_preserve_rename_copy_delete_and_add() {
+        assert_eq!(change_letter(&file("renamed", "R", ""), VcsKind::Git), "R");
+        assert_eq!(change_letter(&file("copied", "C", ""), VcsKind::Git), "C");
+        assert_eq!(change_letter(&file("deleted", "D", ""), VcsKind::Git), "D");
+        assert_eq!(change_letter(&file("added", "A", ""), VcsKind::Git), "A");
+    }
+
+    #[test]
+    fn non_git_status_labels_keep_provider_status_behavior() {
+        let modified = file("modified", "", "M");
+        assert_eq!(change_letter(&modified, VcsKind::Svn), "M");
+        assert_eq!(workspace_status(&modified, VcsKind::Svn), "수정");
+    }
+}
+
+fn git_change_letter(f: &FileChange) -> &'static str {
+    if f.conflicted() {
+        return "!";
+    }
+    if f.status.eq_ignore_ascii_case("untracked") || f.status == "?" {
+        return "?";
+    }
+    let codes = [&f.index_status, &f.worktree_status];
+    for (code, letter) in [('R', "R"), ('C', "C"), ('D', "D"), ('A', "A")] {
+        if codes.iter().any(|value| value.starts_with(code)) {
+            return letter;
+        }
+    }
+    if codes.iter().any(|value| !value.is_empty()) {
+        "M"
+    } else if f.status.eq_ignore_ascii_case("renamed") {
+        "R"
+    } else if f.status.eq_ignore_ascii_case("copied") {
+        "C"
+    } else if f.status.eq_ignore_ascii_case("deleted") {
+        "D"
+    } else if f.status.eq_ignore_ascii_case("added") {
+        "A"
+    } else {
+        "M"
+    }
+}
+
+fn workspace_status(f: &FileChange, vcs_kind: VcsKind) -> &str {
+    if vcs_kind != VcsKind::Git || f.conflicted() {
+        return status(f);
+    }
+    let staged = !f.index_status.trim().is_empty() && f.index_status != "?";
+    let unstaged = !f.worktree_status.trim().is_empty() && f.worktree_status != "?";
+    match (staged, unstaged) {
+        (true, true) => "일부 포함",
+        (true, false) => "커밋 포함",
+        (false, _) => status(f),
     }
 }
 fn panel(ui: &mut egui::Ui, rect: egui::Rect, margin: f32, contents: impl FnOnce(&mut egui::Ui)) {

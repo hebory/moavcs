@@ -1,5 +1,8 @@
 mod dialogs;
 mod inspection;
+mod inspection_data;
+#[cfg(test)]
+mod interaction_tests;
 #[cfg(test)]
 mod performance;
 mod theme;
@@ -17,7 +20,7 @@ use moavcs_core::{
     settings::{AppSettings, ExternalToolKind, SettingsStore},
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::{
         mpsc::{Receiver, Sender, TryRecvError},
@@ -49,8 +52,28 @@ enum SettingsTab {
 }
 #[derive(Clone)]
 pub(super) enum Inspection {
-    Diff(FileComparison),
+    Diff {
+        data: Arc<FileComparison>,
+        prepared: Arc<inspection_data::PreparedDiff>,
+    },
     Blame(BlameResult),
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ReadSlot {
+    Open,
+    Status,
+    History,
+    Details,
+    HistoryDiff,
+    Diff,
+    Inspect,
+    Remote,
+    Conflict,
+}
+struct PendingRead {
+    id: u64,
+    cancel: CancelToken,
+    label: String,
 }
 pub(super) enum Event {
     Opened(
@@ -60,13 +83,22 @@ pub(super) enum Event {
     Status(u64, std::result::Result<Vec<FileChange>, String>),
     History(u64, std::result::Result<HistorySnapshot, String>),
     Details(u64, String, std::result::Result<HistoryDetails, String>),
-    Hdiff(u64, String, String, std::result::Result<String, String>),
-    Diff(u64, String, std::result::Result<String, String>),
+    Hdiff(
+        u64,
+        String,
+        String,
+        std::result::Result<(String, PreparedText), String>,
+    ),
+    Diff(
+        u64,
+        String,
+        std::result::Result<(String, PreparedText), String>,
+    ),
     Inspect(u64, String, std::result::Result<Inspection, String>),
     Remote(u64, std::result::Result<RemoteInfo, String>),
     RemoteSaved(u64, std::result::Result<(), String>),
     Done(u64, String, std::result::Result<String, String>),
-    Conflict(u64, std::result::Result<ConflictFile, String>),
+    Conflict(u64, String, std::result::Result<ConflictFile, String>),
     ConflictSaved(u64, std::result::Result<ConflictFile, String>),
     ConflictResolved(u64, std::result::Result<(), String>),
 }
@@ -77,9 +109,12 @@ pub struct MoaApp {
     settings_store: SettingsStore,
     settings: AppSettings,
     startup: LaunchOptions,
+    startup_action_pending: bool,
     generation: u64,
     cancel: Option<CancelToken>,
     busy: Option<String>,
+    next_read: u64,
+    read_slots: HashMap<ReadSlot, PendingRead>,
     provider: Option<Arc<dyn VcsProvider>>,
     repo: Option<RepositoryInfo>,
     changes: Vec<FileChange>,
@@ -95,6 +130,7 @@ pub struct MoaApp {
     history_file: Option<String>,
     hdiff: String,
     logs: Vec<String>,
+    logs_text: String,
     notice: Option<String>,
     dialog: Option<Dialog>,
     pending_sync: Option<Operation>,
@@ -113,11 +149,18 @@ pub struct MoaApp {
     remote_url: String,
     remote_expected: Option<RemoteInfo>,
     inspection: Option<Inspection>,
+    prepared_diff: Option<Arc<inspection_data::PreparedDiff>>,
     inspection_search: String,
     inspection_status: String,
     inspection_change_index: usize,
-    inspection_scroll: f32,
-    conflict: Option<ConflictFile>,
+    diff_view: PreparedText,
+    history_diff_view: PreparedText,
+    logs_view: PreparedText,
+    has_conflicts: bool,
+    staged_file_count: usize,
+    selected_conflicted: bool,
+    conflict: Option<Arc<ConflictFile>>,
+    conflict_view: Option<Arc<inspection_data::PreparedConflict>>,
     conflict_text: String,
     conflict_selection: Option<(usize, usize)>,
     smoke_output: Option<PathBuf>,
@@ -157,9 +200,12 @@ impl MoaApp {
             settings_store: store,
             settings,
             startup: startup.clone(),
+            startup_action_pending: startup.path.is_some(),
             generation: 0,
             cancel: None,
             busy: None,
+            next_read: 0,
+            read_slots: HashMap::new(),
             provider: None,
             repo: None,
             changes: vec![],
@@ -175,6 +221,7 @@ impl MoaApp {
             history_file: None,
             hdiff: String::new(),
             logs: vec![],
+            logs_text: String::new(),
             notice: None,
             dialog: None,
             pending_sync: None,
@@ -193,11 +240,18 @@ impl MoaApp {
             remote_url: String::new(),
             remote_expected: None,
             inspection: None,
+            prepared_diff: None,
             inspection_search: String::new(),
             inspection_status: String::new(),
             inspection_change_index: 0,
-            inspection_scroll: 0.0,
+            diff_view: PreparedText::default(),
+            history_diff_view: PreparedText::default(),
+            logs_view: PreparedText::default(),
+            has_conflicts: false,
+            staged_file_count: 0,
+            selected_conflicted: false,
             conflict: None,
+            conflict_view: None,
             conflict_text: String::new(),
             conflict_selection: None,
             smoke_output,
@@ -223,6 +277,7 @@ impl MoaApp {
         a
     }
     fn begin(&mut self, label: &str) -> (u64, CancelToken) {
+        self.cancel_reads();
         if let Some(c) = self.cancel.take() {
             c.cancel()
         }
@@ -240,11 +295,67 @@ impl MoaApp {
         self.cancel = None;
         true
     }
+    fn begin_read(&mut self, slot: ReadSlot, label: &str) -> (u64, CancelToken) {
+        self.cancel_read_slot(slot);
+        self.next_read = self.next_read.wrapping_add(1);
+        let id = self.next_read;
+        let cancel = CancelToken::new();
+        self.read_slots.insert(
+            slot,
+            PendingRead {
+                id,
+                cancel: cancel.clone(),
+                label: label.to_owned(),
+            },
+        );
+        (id, cancel)
+    }
+    fn cancel_read_slot(&mut self, slot: ReadSlot) {
+        if let Some(pending) = self.read_slots.remove(&slot) {
+            pending.cancel.cancel();
+        }
+    }
+    fn finish_read(&mut self, slot: ReadSlot, id: u64) -> bool {
+        if self
+            .read_slots
+            .get(&slot)
+            .is_some_and(|pending| pending.id == id)
+        {
+            self.read_slots.remove(&slot);
+            return true;
+        }
+        false
+    }
+    fn cancel_reads(&mut self) {
+        if self.read_slots.contains_key(&ReadSlot::Open) {
+            self.startup_action_pending = false;
+        }
+        for (_, pending) in self.read_slots.drain() {
+            pending.cancel.cancel();
+        }
+    }
+    fn controls_locked(&self) -> bool {
+        self.busy.is_some()
+            || self.pending_sync.is_some()
+            || self.read_slots.contains_key(&ReadSlot::Open)
+    }
+    fn take_startup_action(&mut self) -> Option<String> {
+        if !self.startup_action_pending {
+            return None;
+        }
+        self.startup_action_pending = false;
+        Some(self.startup.action.clone())
+    }
+    fn is_loading(&self) -> bool {
+        !self.read_slots.is_empty()
+    }
     fn log(&mut self, s: impl Into<String>) {
         self.logs.push(s.into());
         if self.logs.len() > 400 {
             self.logs.drain(..100);
         }
+        self.logs_text = self.logs.join("\n\n");
+        self.logs_view = PreparedText::new(&self.logs_text);
     }
     fn pin_recent(&mut self, path: &str, pinned: bool) {
         match self.settings_store.pin(path, pinned) {
@@ -379,7 +490,7 @@ impl MoaApp {
         if phase_changed {
             println!("UI smoke step {}", self.smoke_step);
         }
-        if self.smoke_capture.is_some() || self.busy.is_some() {
+        if self.smoke_capture.is_some() || self.busy.is_some() || self.is_loading() {
             return;
         }
         let Some(repo) = self.repo.clone() else {
@@ -419,7 +530,7 @@ impl MoaApp {
                     if let Some(error) = self.notice.clone() {
                         self.smoke_assert("diff preview", false, &error);
                     }
-                    if self.busy.is_none() {
+                    if self.busy.is_none() && !self.is_loading() {
                         self.load_diff();
                     }
                     return;
@@ -452,7 +563,7 @@ impl MoaApp {
                 self.smoke_step = 22;
             }
             22 => {
-                if self.busy.is_some() {
+                if self.busy.is_some() || self.is_loading() {
                     return;
                 }
                 let staged_preview = self.diff.contains("UI 변경 내용");
@@ -498,7 +609,7 @@ impl MoaApp {
                     details.files.iter().any(|file| file.path == "tracked.txt")
                 });
                 let file_diff = !self.hdiff.is_empty();
-                if self.busy.is_some() {
+                if self.busy.is_some() || self.is_loading() {
                     return;
                 }
                 self.smoke_assert(
@@ -558,7 +669,7 @@ impl MoaApp {
                 self.smoke_step = 7;
             }
             7 => {
-                let Some(Inspection::Diff(diff)) = self.inspection.clone() else {
+                let Some(Inspection::Diff { data: diff, .. }) = self.inspection.clone() else {
                     return;
                 };
                 let valid = diff.left_text.contains("UI 변경 내용")
@@ -858,9 +969,35 @@ impl MoaApp {
                 self.smoke_capture(
                     ctx,
                     "long-labels-min",
-                    37,
+                    41,
                     serde_json::json!({"long_branch_and_paths":true,"multiple_file_rows":true}),
                 );
+            }
+            41 => {
+                if let Err(error) = crate::smoke::prepare_workspace_list(&repo.root) {
+                    self.smoke_assert("workspace list fixture", false, &error);
+                }
+                self.message.clear();
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1370., 900.)));
+                self.open(repo.root, Some(VcsKind::Git));
+                self.smoke_step = 42;
+            }
+            42 => {
+                if self.file.as_deref() != Some("client/history.rs") {
+                    self.select_file("client/history.rs");
+                    return;
+                }
+                self.smoke_assert(
+                    "workspace list",
+                    self.changes.len() >= 18,
+                    "Git changes missing",
+                );
+                self.smoke_assert(
+                    "workspace list preview",
+                    self.diff.contains("pub mod branches"),
+                    "selected file diff missing",
+                );
+                self.smoke_capture(ctx, "workspace-list", 37, serde_json::json!({"changed_files":self.changes.len(),"preview_path":self.file}));
             }
             38 => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(860., 620.)));
@@ -898,7 +1035,11 @@ impl MoaApp {
         }
     }
     fn open(&mut self, path: PathBuf, kind: Option<VcsKind>) {
-        let (g, c) = self.begin("저장소를 여는 중…");
+        if self.busy.is_some() || self.pending_sync.is_some() {
+            return;
+        }
+        self.cancel_reads();
+        let (g, c) = self.begin_read(ReadSlot::Open, "저장소를 여는 중…");
         let tx = self.tx.clone();
         let paths = self.settings.executable_paths.clone();
         thread::spawn(move || {
@@ -923,11 +1064,22 @@ impl MoaApp {
             let _ = tx.send(Event::Opened(g, result));
         });
     }
+    fn set_changes(&mut self, changes: Vec<FileChange>) {
+        self.has_conflicts = changes.iter().any(FileChange::conflicted);
+        self.staged_file_count = changes.iter().filter(|f| f.staged()).count();
+        if !self.picked.is_empty() {
+            self.picked = changes
+                .iter()
+                .filter_map(|f| self.picked.take(&f.path))
+                .collect();
+        }
+        self.changes = changes;
+    }
     fn refresh(&mut self) {
         let (Some(p), Some(r)) = (self.provider.clone(), self.repo.clone()) else {
             return;
         };
-        let (g, c) = self.begin("작업 공간을 새로 고치는 중…");
+        let (g, c) = self.begin_read(ReadSlot::Status, "작업 공간을 새로 고치는 중…");
         let tx = self.tx.clone();
         thread::spawn(move || {
             let _ = tx.send(Event::Status(
@@ -941,7 +1093,7 @@ impl MoaApp {
             return;
         };
         let scope = self.scope;
-        let (g, c) = self.begin("커밋 이력을 불러오는 중…");
+        let (g, c) = self.begin_read(ReadSlot::History, "커밋 이력을 불러오는 중…");
         let tx = self.tx.clone();
         thread::spawn(move || {
             let _ = tx.send(Event::History(
@@ -957,7 +1109,10 @@ impl MoaApp {
         let id = e.id.clone();
         self.revision = Some(id.clone());
         self.details = None;
-        let (g, c) = self.begin("커밋 세부 내역을 불러오는 중…");
+        self.history_file = None;
+        self.hdiff.clear();
+        self.history_diff_view = PreparedText::default();
+        let (g, c) = self.begin_read(ReadSlot::Details, "커밋 세부 내역을 불러오는 중…");
         let tx = self.tx.clone();
         thread::spawn(move || {
             let _ = tx.send(Event::Details(
@@ -974,19 +1129,25 @@ impl MoaApp {
         };
         let (id, path, file) = (rev.to_owned(), f.path.clone(), f.clone());
         self.history_file = Some(path.clone());
-        let (g, c) = self.begin("파일 Diff를 불러오는 중…");
+        self.hdiff.clear();
+        self.history_diff_view = PreparedText::default();
+        let (g, c) = self.begin_read(ReadSlot::HistoryDiff, "파일 Diff를 불러오는 중…");
         let tx = self.tx.clone();
         thread::spawn(move || {
-            let _ = tx.send(Event::Hdiff(
-                g,
-                id.clone(),
-                path.clone(),
-                p.history_diff(&r.root, &id, Some(&file), &c)
-                    .map_err(|e| e.to_string()),
-            ));
+            let result = p
+                .history_diff(&r.root, &id, Some(&file), &c)
+                .map(|text| {
+                    let index = PreparedText::new(&text);
+                    (text, index)
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(Event::Hdiff(g, id.clone(), path.clone(), result));
         });
     }
     fn execute(&mut self, op: Operation, msg: String, paths: Vec<String>) {
+        if self.controls_locked() {
+            return;
+        }
         let (Some(p), Some(r)) = (self.provider.clone(), self.repo.clone()) else {
             return;
         };
@@ -1050,19 +1211,28 @@ impl MoaApp {
         });
         let path = f.as_ref().map(|x| x.path.clone()).unwrap_or_default();
         let staged = self.staged;
-        let (g, c) = self.begin("Diff를 불러오는 중…");
+        self.diff.clear();
+        self.diff_view = PreparedText::default();
+        let (g, c) = self.begin_read(ReadSlot::Diff, "Diff를 불러오는 중…");
         let tx = self.tx.clone();
         thread::spawn(move || {
-            let _ = tx.send(Event::Diff(
-                g,
-                path,
-                p.diff(&r.root, f.as_ref(), staged, &c)
-                    .map_err(|e| e.to_string()),
-            ));
+            let result = p
+                .diff(&r.root, f.as_ref(), staged, &c)
+                .map(|text| {
+                    let index = PreparedText::new(&text);
+                    (text, index)
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(Event::Diff(g, path, result));
         });
     }
     fn select_file(&mut self, path: impl Into<String>) {
         let path = path.into();
+        self.selected_conflicted = self
+            .changes
+            .iter()
+            .find(|change| change.path == path)
+            .is_some_and(FileChange::conflicted);
         self.file = Some(path);
         self.inspection = None;
         self.diff.clear();
@@ -1078,7 +1248,6 @@ impl MoaApp {
         self.inspection_search.clear();
         self.inspection_status.clear();
         self.inspection_change_index = 0;
-        self.inspection_scroll = 0.0;
         let (Some(p), Some(r)) = (self.provider.clone(), self.repo.clone()) else {
             return;
         };
@@ -1110,7 +1279,9 @@ impl MoaApp {
             .cloned()
             .unwrap_or_default();
         let staged = self.staged;
-        let (g, c) = self.begin("파일 도구를 불러오는 중…");
+        self.inspection = None;
+        let (g, c) = self.begin_read(ReadSlot::Inspect, "파일 도구를 불러오는 중…");
+        let cached = self.prepared_diff.clone();
         let tx = self.tx.clone();
         thread::spawn(move || {
             let result = if !force_internal
@@ -1119,19 +1290,29 @@ impl MoaApp {
             {
                 if blame {
                     p.blame(&r.root, &f, &c).and_then(|data| {
+                        c.check()?;
                         external::launch_blame(&tool, &data, &r.root)?;
                         Ok(Inspection::Blame(data))
                     })
                 } else {
                     p.comparison(&r.root, &f, staged, &c).and_then(|data| {
+                        c.check()?;
                         external::launch_diff(&tool, &data, &r.root)?;
-                        Ok(Inspection::Diff(data))
+                        let data = Arc::new(data);
+                        inspection_data::PreparedDiff::prepare(data.clone(), cached.as_ref(), &c)
+                            .map_err(moavcs_core::models::VcsError)
+                            .map(|prepared| Inspection::Diff { data, prepared })
                     })
                 }
             } else if blame {
                 p.blame(&r.root, &f, &c).map(Inspection::Blame)
             } else {
-                p.comparison(&r.root, &f, staged, &c).map(Inspection::Diff)
+                p.comparison(&r.root, &f, staged, &c).and_then(|data| {
+                    let data = Arc::new(data);
+                    inspection_data::PreparedDiff::prepare(data.clone(), cached.as_ref(), &c)
+                        .map_err(moavcs_core::models::VcsError)
+                        .map(|prepared| Inspection::Diff { data, prepared })
+                })
             }
             .map_err(|e| e.to_string());
             let _ = tx.send(Event::Inspect(g, path, result));
@@ -1145,13 +1326,36 @@ impl MoaApp {
             };
             match ev {
                 Event::Opened(g, r) => {
-                    if self.finish(g) {
+                    if self.finish_read(ReadSlot::Open, g) {
+                        self.cancel_reads();
                         match r {
                             Ok((p, repo, changes)) => {
+                                self.picked.clear();
+                                self.staged = false;
+                                self.remote = None;
+                                self.remote_expected = None;
+                                self.remote_url.clear();
+                                if self.dialog == Some(Dialog::Remote) {
+                                    self.dialog = None;
+                                }
+                                self.diff.clear();
+                                self.diff_view = PreparedText::default();
+                                self.history = HistorySnapshot::default();
+                                self.history_graph = GraphLayout::default();
+                                self.revision = None;
+                                self.details = None;
+                                self.history_file = None;
+                                self.hdiff.clear();
+                                self.history_diff_view = PreparedText::default();
+                                self.inspection = None;
+                                self.prepared_diff = None;
+                                self.conflict = None;
+                                self.conflict_view = None;
+                                self.conflict_text.clear();
+                                self.selected_conflicted = false;
                                 self.provider = Some(p);
                                 self.repo = Some(repo.clone());
-                                self.changes = changes;
-                                self.picked.clear();
+                                self.set_changes(changes);
                                 self.file = None;
                                 self.notice = None;
                                 self.log(format!("저장소 열기: {}", repo.root.display()));
@@ -1178,53 +1382,60 @@ impl MoaApp {
                                 {
                                     self.select_file(first);
                                 }
-                                match self.startup.action.as_str() {
-                                    "log" => {
-                                        self.tab = Tab::History;
-                                        self.load_history()
-                                    }
-                                    "remote" => self.request_remote(),
-                                    "settings" => self.dialog = Some(Dialog::Settings),
-                                    "commit" => {
-                                        self.tab = Tab::Changes;
-                                    }
-                                    "update" => self.request_sync(Operation::Update),
-                                    "push" => self.request_sync(Operation::Push),
-                                    "fetch" => {
-                                        self.execute(Operation::Fetch, String::new(), vec![])
-                                    }
-                                    "diff" => {
-                                        if self.file.is_none() {
-                                            self.file =
-                                                self.changes.first().map(|f| f.path.clone());
+                                if let Some(action) = self.take_startup_action() {
+                                    match action.as_str() {
+                                        "log" => {
+                                            self.tab = Tab::History;
+                                            self.load_history()
                                         }
-                                        self.inspect(false)
-                                    }
-                                    "blame" => {
-                                        if self.file.is_none() {
-                                            self.file =
-                                                self.changes.first().map(|f| f.path.clone());
+                                        "remote" => self.request_remote(),
+                                        "settings" => self.dialog = Some(Dialog::Settings),
+                                        "commit" => {
+                                            self.tab = Tab::Changes;
                                         }
-                                        self.inspect(true)
+                                        "update" => self.request_sync(Operation::Update),
+                                        "push" => self.request_sync(Operation::Push),
+                                        "fetch" => {
+                                            self.execute(Operation::Fetch, String::new(), vec![])
+                                        }
+                                        "diff" => {
+                                            if self.file.is_none() {
+                                                self.file =
+                                                    self.changes.first().map(|f| f.path.clone());
+                                            }
+                                            self.inspect(false)
+                                        }
+                                        "blame" => {
+                                            if self.file.is_none() {
+                                                self.file =
+                                                    self.changes.first().map(|f| f.path.clone());
+                                            }
+                                            self.inspect(true)
+                                        }
+                                        _ => {}
                                     }
-                                    _ => {}
                                 }
                             }
-                            Err(e) => self.notice = Some(e),
+                            Err(e) => {
+                                self.startup_action_pending = false;
+                                self.notice = Some(e);
+                            }
                         }
                     }
                 }
                 Event::Status(g, r) => {
-                    if self.finish(g) {
+                    if self.finish_read(ReadSlot::Status, g) {
                         match r {
                             Ok(v) => {
-                                self.changes = v;
+                                self.set_changes(v);
                                 if let Some(f) = self.file.clone() {
                                     if self.changes.iter().any(|x| x.path == f) {
                                         self.select_file(f)
                                     } else {
                                         self.file = None;
                                         self.diff.clear();
+                                        self.diff_view = PreparedText::default();
+                                        self.selected_conflicted = false;
                                         self.inspection = None;
                                     }
                                 }
@@ -1237,13 +1448,31 @@ impl MoaApp {
                     }
                 }
                 Event::History(g, r) => {
-                    if self.finish(g) {
+                    if self.finish_read(ReadSlot::History, g) {
                         match r {
                             Ok(h) => {
+                                let preferred_revision = self.revision.clone();
                                 self.history = h;
                                 self.history_graph = GraphLayout::new(&self.history.entries);
-                                if let Some(e) = self.history.entries.first().cloned() {
+                                let selected = preferred_revision
+                                    .and_then(|revision| {
+                                        self.history
+                                            .entries
+                                            .iter()
+                                            .find(|entry| entry.id == revision)
+                                            .cloned()
+                                    })
+                                    .or_else(|| self.history.entries.first().cloned());
+                                if let Some(e) = selected {
                                     self.load_details(&e)
+                                } else {
+                                    self.cancel_read_slot(ReadSlot::Details);
+                                    self.cancel_read_slot(ReadSlot::HistoryDiff);
+                                    self.revision = None;
+                                    self.details = None;
+                                    self.history_file = None;
+                                    self.hdiff.clear();
+                                    self.history_diff_view = PreparedText::default();
                                 }
                             }
                             Err(e) => self.notice = Some(e),
@@ -1251,7 +1480,9 @@ impl MoaApp {
                     }
                 }
                 Event::Details(g, id, r) => {
-                    if self.finish(g) && self.revision.as_deref() == Some(&id) {
+                    if self.finish_read(ReadSlot::Details, g)
+                        && self.revision.as_deref() == Some(&id)
+                    {
                         match r {
                             Ok(d) => {
                                 self.details = Some(d.clone());
@@ -1264,34 +1495,48 @@ impl MoaApp {
                     }
                 }
                 Event::Hdiff(g, id, path, r) => {
-                    if self.finish(g)
+                    if self.finish_read(ReadSlot::HistoryDiff, g)
                         && self.revision.as_deref() == Some(&id)
                         && self.history_file.as_deref() == Some(&path)
                     {
                         match r {
-                            Ok(v) => self.hdiff = v,
+                            Ok((text, index)) => {
+                                self.history_diff_view = index;
+                                self.hdiff = text;
+                            }
                             Err(e) => self.notice = Some(e),
                         }
                     }
                 }
                 Event::Diff(g, path, r) => {
-                    if self.finish(g) && self.file.as_deref().unwrap_or("") == path {
+                    if self.finish_read(ReadSlot::Diff, g)
+                        && self.file.as_deref().unwrap_or("") == path
+                    {
                         match r {
-                            Ok(v) => self.diff = v,
+                            Ok((text, index)) => {
+                                self.diff_view = index;
+                                self.diff = text;
+                            }
                             Err(e) => self.notice = Some(e),
                         }
                     }
                 }
                 Event::Inspect(g, path, r) => {
-                    if self.finish(g) && self.file.as_deref() == Some(&path) {
+                    if self.finish_read(ReadSlot::Inspect, g) && self.file.as_deref() == Some(&path)
+                    {
                         match r {
-                            Ok(v) => self.inspection = Some(v),
+                            Ok(v) => {
+                                if let Inspection::Diff { prepared, .. } = &v {
+                                    self.prepared_diff = Some(prepared.clone());
+                                }
+                                self.inspection = Some(v);
+                            }
                             Err(e) => self.notice = Some(e),
                         }
                     }
                 }
                 Event::Remote(g, r) => {
-                    if self.finish(g) {
+                    if self.finish_read(ReadSlot::Remote, g) {
                         match r {
                             Ok(v) => {
                                 self.remote_url = v.fetch_urls.first().cloned().unwrap_or_default();
@@ -1326,13 +1571,19 @@ impl MoaApp {
                         }
                     }
                 }
-                Event::Conflict(g, r) => {
-                    if self.finish(g) {
+                Event::Conflict(g, path, r) => {
+                    if self.finish_read(ReadSlot::Conflict, g)
+                        && self.file.as_deref() == Some(&path)
+                    {
                         match r {
                             Ok(v) => {
                                 self.conflict_text = v.working_text.clone();
                                 self.conflict_selection = None;
-                                self.conflict = Some(v)
+                                let source = Arc::new(v);
+                                self.conflict_view = Some(Arc::new(
+                                    inspection_data::PreparedConflict::new(source.clone()),
+                                ));
+                                self.conflict = Some(source);
                             }
                             Err(e) => self.notice = Some(e),
                         }
@@ -1344,7 +1595,11 @@ impl MoaApp {
                             Ok(v) => {
                                 self.conflict_text = v.working_text.clone();
                                 self.conflict_selection = None;
-                                self.conflict = Some(v);
+                                let source = Arc::new(v);
+                                self.conflict_view = Some(Arc::new(
+                                    inspection_data::PreparedConflict::new(source.clone()),
+                                ));
+                                self.conflict = Some(source);
                                 self.notice = Some(
                                     "충돌 결과를 저장했습니다. 검토 후 해결 완료를 표시하세요."
                                         .into(),
@@ -1359,6 +1614,7 @@ impl MoaApp {
                         match r {
                             Ok(()) => {
                                 self.conflict = None;
+                                self.conflict_view = None;
                                 self.notice = Some("충돌 해결로 표시했습니다.".into());
                                 self.refresh()
                             }
@@ -1368,7 +1624,7 @@ impl MoaApp {
                 }
             }
         }
-        if self.busy.is_some() {
+        if self.busy.is_some() || self.is_loading() {
             ctx.request_repaint_after(std::time::Duration::from_millis(60));
         }
     }
@@ -1394,7 +1650,7 @@ impl MoaApp {
         let (Some(p), Some(r)) = (self.provider.clone(), self.repo.clone()) else {
             return;
         };
-        let (g, c) = self.begin("원격 주소를 불러오는 중…");
+        let (g, c) = self.begin_read(ReadSlot::Remote, "원격 주소를 불러오는 중…");
         let tx = self.tx.clone();
         thread::spawn(move || {
             let _ = tx.send(Event::Remote(
@@ -1404,6 +1660,9 @@ impl MoaApp {
         });
     }
     fn save_remote(&mut self) {
+        if self.controls_locked() {
+            return;
+        }
         let (Some(p), Some(r), Some(expected)) = (
             self.provider.clone(),
             self.repo.clone(),
@@ -1438,16 +1697,20 @@ impl MoaApp {
             self.notice = Some("먼저 충돌 상태인 파일을 선택하세요.".into());
             return;
         }
-        let (g, c) = self.begin("충돌 내용을 여는 중…");
+        let (g, c) = self.begin_read(ReadSlot::Conflict, "충돌 내용을 여는 중…");
         let tx = self.tx.clone();
         thread::spawn(move || {
             let _ = tx.send(Event::Conflict(
                 g,
+                f.path.clone(),
                 p.conflict(&r.root, &f, &c).map_err(|e| e.to_string()),
             ));
         });
     }
     fn save_conflict(&mut self) {
+        if self.controls_locked() {
+            return;
+        }
         let (Some(p), Some(c)) = (self.provider.clone(), self.conflict.clone()) else {
             return;
         };
@@ -1460,6 +1723,9 @@ impl MoaApp {
         });
     }
     fn resolve_conflict(&mut self) {
+        if self.controls_locked() {
+            return;
+        }
         let (Some(p), Some(c)) = (self.provider.clone(), self.conflict.clone()) else {
             return;
         };
@@ -1478,6 +1744,9 @@ impl MoaApp {
         self.name_touched = false;
     }
     fn run_request(&mut self, req: VcsRequest, label: &str) {
+        if self.controls_locked() {
+            return;
+        }
         let Some(p) = self.provider.clone().or_else(|| {
             Some(create_provider(
                 self.checkout_kind,
@@ -1503,6 +1772,66 @@ impl MoaApp {
             ));
         });
     }
+    fn status_ui(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("status")
+            .exact_height(28.0)
+            .frame(
+                egui::Frame::none()
+                    .fill(SURFACE)
+                    .inner_margin(egui::vec2(18., 4.)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(8., 16.), egui::Sense::hover());
+                    ui.painter().circle_filled(
+                        r.center(),
+                        3.,
+                        if self.busy.is_some() || self.is_loading() {
+                            ACCENT
+                        } else {
+                            GREEN
+                        },
+                    );
+                    if let Some(label) = self.busy.clone() {
+                        ui.spinner();
+                        ui.add(
+                            egui::Label::new(RichText::new(label).size(11.5).color(MUTED))
+                                .truncate(),
+                        );
+                        if ui.small_button("취소").clicked() {
+                            if let Some(cancel) = &self.cancel {
+                                cancel.cancel();
+                            }
+                            self.notice = Some("작업을 취소하고 있습니다…".into());
+                        }
+                    } else if let Some(label) = self
+                        .read_slots
+                        .values()
+                        .max_by_key(|pending| pending.id)
+                        .map(|pending| pending.label.clone())
+                    {
+                        ui.spinner();
+                        ui.add(
+                            egui::Label::new(RichText::new(label).size(11.5).color(MUTED))
+                                .truncate(),
+                        );
+                        if ui.small_button("조회 취소").clicked() {
+                            self.cancel_reads();
+                            self.notice = Some("조회 작업을 취소했습니다.".into());
+                        }
+                    } else {
+                        ui.label(RichText::new("준비됨").size(11.5).color(MUTED));
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new("Ctrl+O  열기     F5  새로 고침")
+                                .size(10.5)
+                                .color(MUTED),
+                        );
+                    });
+                });
+            });
+    }
 }
 impl eframe::App for MoaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1520,45 +1849,7 @@ impl eframe::App for MoaApp {
                 self.refresh();
             }
         }
-        egui::TopBottomPanel::bottom("status")
-            .exact_height(28.0)
-            .frame(
-                egui::Frame::none()
-                    .fill(SURFACE)
-                    .inner_margin(egui::vec2(18., 4.)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(egui::vec2(8., 16.), egui::Sense::hover());
-                    ui.painter().circle_filled(
-                        r.center(),
-                        3.,
-                        if self.busy.is_some() { ACCENT } else { GREEN },
-                    );
-                    if let Some(label) = self.busy.clone() {
-                        ui.spinner();
-                        ui.add(
-                            egui::Label::new(RichText::new(label).size(11.5).color(MUTED))
-                                .truncate(),
-                        );
-                        if ui.small_button("취소").clicked() {
-                            if let Some(cancel) = &self.cancel {
-                                cancel.cancel();
-                            }
-                            self.notice = Some("작업을 취소하고 있습니다…".into());
-                        }
-                    } else {
-                        ui.label(RichText::new("준비됨").size(11.5).color(MUTED));
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new("Ctrl+O  열기     F5  새로 고침")
-                                .size(10.5)
-                                .color(MUTED),
-                        );
-                    });
-                });
-            });
+        self.status_ui(ctx);
         self.top(ctx);
         self.sidebar(ctx);
         self.body(ctx);
@@ -1566,7 +1857,7 @@ impl eframe::App for MoaApp {
         self.smoke_tick(ctx);
         // Background VCS jobs report through a channel; keep polling even when
         // no widget animation or mouse movement requests another frame.
-        if self.busy.is_some() || self.smoke_output.is_some() {
+        if self.busy.is_some() || self.is_loading() || self.smoke_output.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
     }

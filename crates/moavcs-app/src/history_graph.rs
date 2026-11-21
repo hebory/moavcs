@@ -25,16 +25,29 @@ const PALETTE: [Color32; 7] = [
 pub const GRAPH_WIDTH: f32 = 104.0;
 
 /// Precomputed parent topology for a bounded, newest-first history snapshot.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct GraphLayout {
     rows: HashMap<String, RowLayout>,
+    column_width: f32,
+}
+
+impl Default for GraphLayout {
+    fn default() -> Self {
+        Self {
+            rows: HashMap::new(),
+            column_width: LEFT + LANE_PITCH + 8.0,
+        }
+    }
 }
 
 impl GraphLayout {
     /// Keep simple histories compact while reserving lanes for visible merges.
     pub fn column_width(&self) -> f32 {
-        let lane = self
-            .rows
+        self.column_width
+    }
+
+    fn measure_column_width(rows: &HashMap<String, RowLayout>) -> f32 {
+        let lane = rows
             .values()
             .map(|row| {
                 row.segments
@@ -190,7 +203,8 @@ impl GraphLayout {
             seen.insert(entry.id.clone());
         }
 
-        Self { rows }
+        let column_width = Self::measure_column_width(&rows);
+        Self { rows, column_width }
     }
 
     /// Paint one precomputed history row and return its allocated egui response.

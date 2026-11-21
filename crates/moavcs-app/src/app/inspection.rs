@@ -1,44 +1,44 @@
+use super::inspection_data::PreparedDiff;
 use super::*;
 use egui::{Align2, FontId, Rect, Sense, Stroke, Vec2};
 
-const ROW_HEIGHT: f32 = 25.0;
-const CODE_FONT: f32 = 13.0;
-const GUTTER_WIDTH: f32 = 62.0;
+const ROW_HEIGHT: f32 = 29.0;
+const CODE_FONT: f32 = 14.0;
+const GUTTER_WIDTH: f32 = 70.0;
 
 impl MoaApp {
     pub(super) fn inspection_ui(&mut self, ctx: &egui::Context) {
         let mut open = true;
-        if let Some(inspection) = self.inspection.clone() {
-            match inspection {
-                Inspection::Diff(diff) => self.diff_window(ctx, &mut open, &diff),
-                Inspection::Blame(blame) => self.blame_window(ctx, &mut open, &blame),
+        match self.inspection.take() {
+            Some(Inspection::Diff { data, prepared }) => {
+                self.diff_window(ctx, &mut open, &data, &prepared);
+                if open {
+                    self.inspection = Some(Inspection::Diff { data, prepared });
+                }
             }
-            if !open {
-                self.inspection = None;
+            Some(Inspection::Blame(blame)) => {
+                self.blame_window(ctx, &mut open, &blame);
+                if open {
+                    self.inspection = Some(Inspection::Blame(blame));
+                }
             }
+            None => {}
         }
     }
 
-    fn diff_window(&mut self, ctx: &egui::Context, open: &mut bool, diff: &FileComparison) {
-        let compared = moavcs_core::text::compare_lines(
-            &diff.left_text,
-            &diff.right_text,
-            &CancelToken::new(),
-        )
-        .ok();
-        let rows = compared
-            .as_ref()
-            .map(|comparison| comparison.rows.as_slice())
-            .unwrap_or_default();
-        let changed_rows = rows
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| row.kind != "unchanged")
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        let added = rows.iter().filter(|row| row.kind == "added").count();
-        let removed = rows.iter().filter(|row| row.kind == "removed").count();
-        let modified = rows.iter().filter(|row| row.kind == "modified").count();
+    fn diff_window(
+        &mut self,
+        ctx: &egui::Context,
+        open: &mut bool,
+        diff: &FileComparison,
+        prepared: &PreparedDiff,
+    ) {
+        let rows = prepared.rows();
+        let changed_rows = prepared.changed_rows.as_slice();
+        let added = prepared.added;
+        let removed = prepared.removed;
+        let modified = prepared.modified;
+        let mut scroll_to = None;
         let title_path = Path::new(&diff.path)
             .file_name()
             .and_then(|name| name.to_str())
@@ -53,7 +53,7 @@ impl MoaApp {
             .max_size(window_size(ctx, [1050.0, 680.0]))
             .show(ctx, |ui| {
                 ui.set_min_width(0.0);
-                if self.busy.is_some() {
+                if self.controls_locked() {
                     ui.disable();
                 }
 
@@ -83,7 +83,7 @@ impl MoaApp {
                 });
 
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("검색").small().color(MUTED));
+                    ui.label(RichText::new("검색").size(13.0).color(MUTED));
                     ui.add_sized(
                         [ui.available_width().min(300.0), 30.0],
                         TextEdit::singleline(&mut self.inspection_search)
@@ -95,13 +95,15 @@ impl MoaApp {
                             self.inspection_change_index.saturating_sub(1);
                         let row =
                             changed_rows[self.inspection_change_index.min(changed_rows.len() - 1)];
-                        self.inspection_scroll = row as f32 * ROW_HEIGHT;
+                        scroll_to = Some(row_offset(row, row_stride(ui)));
                     }
                     if ui.button("다음 변경").clicked() && !changed_rows.is_empty() {
                         self.inspection_change_index =
                             (self.inspection_change_index + 1).min(changed_rows.len() - 1);
-                        self.inspection_scroll =
-                            changed_rows[self.inspection_change_index] as f32 * ROW_HEIGHT;
+                        scroll_to = Some(row_offset(
+                            changed_rows[self.inspection_change_index],
+                            row_stride(ui),
+                        ));
                     }
                     if ui.button("내보내기…").clicked() {
                         let text = format!(
@@ -125,124 +127,99 @@ impl MoaApp {
                 }
                 ui.add_space(6.0);
 
-                if let Some(comparison) = &compared {
-                    if comparison.rows.is_empty() {
-                        surface().show(ui, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(32.0);
-                                ui.label(RichText::new("✓").size(26.0).color(GREEN));
-                                ui.label(RichText::new("두 내용이 같습니다").strong().color(INK));
-                                ui.add_space(32.0);
-                            });
-                        });
-                    } else {
-                        let viewport_height = ui.available_height().max(160.0);
-                        let pane_width = diff_content_width(rows, ui.available_width());
-                        ScrollArea::both()
-                            .id_salt("inspection_diff_rows")
-                            .vertical_scroll_offset(self.inspection_scroll)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.set_min_width(pane_width * 2.0);
-                                ui.set_min_height(
-                                    viewport_height.max(rows.len() as f32 * ROW_HEIGHT),
-                                );
-                                let content_rect = ui.available_rect_before_wrap();
-                                let painter = ui.painter();
-                                painter.rect_filled(content_rect, 0.0, BG);
-                                for gutter_left in
-                                    [content_rect.left(), content_rect.left() + pane_width]
-                                {
-                                    let gutter = Rect::from_min_max(
-                                        egui::pos2(gutter_left, content_rect.top()),
-                                        egui::pos2(
-                                            gutter_left + GUTTER_WIDTH,
-                                            content_rect.bottom(),
-                                        ),
-                                    );
-                                    painter.rect_filled(gutter, 0.0, SURFACE);
-                                    let border_x = gutter.right() - 1.0;
-                                    painter.line_segment(
-                                        [
-                                            egui::pos2(border_x, gutter.top()),
-                                            egui::pos2(border_x, gutter.bottom()),
-                                        ],
-                                        Stroke::new(1.0_f32, BORDER),
-                                    );
-                                }
-                                let divider_x = content_rect.left() + pane_width;
-                                painter.line_segment(
-                                    [
-                                        egui::pos2(divider_x, content_rect.top()),
-                                        egui::pos2(divider_x, content_rect.bottom()),
-                                    ],
-                                    Stroke::new(1.0_f32, BORDER),
-                                );
-                                for row in rows {
-                                    let query = self.inspection_search.trim();
-                                    let hit = !query.is_empty()
-                                        && (row
-                                            .left_text
-                                            .to_lowercase()
-                                            .contains(&query.to_lowercase())
-                                            || row
-                                                .right_text
-                                                .to_lowercase()
-                                                .contains(&query.to_lowercase()));
-                                    let left_fill = if hit {
-                                        Color32::from_rgb(255, 243, 196)
-                                    } else {
-                                        match row.kind.as_str() {
-                                            "removed" | "modified" => RED.gamma_multiply(0.09),
-                                            _ => SURFACE,
-                                        }
-                                    };
-                                    let right_fill = if hit {
-                                        Color32::from_rgb(255, 243, 196)
-                                    } else {
-                                        match row.kind.as_str() {
-                                            "added" | "modified" => GREEN.gamma_multiply(0.09),
-                                            _ => SURFACE,
-                                        }
-                                    };
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        Vec2::new(pane_width * 2.0, ROW_HEIGHT),
-                                        Sense::hover(),
-                                    );
-                                    let left_rect = Rect::from_min_size(
-                                        rect.min,
-                                        Vec2::new(pane_width, ROW_HEIGHT),
-                                    );
-                                    let right_rect = Rect::from_min_size(
-                                        rect.min + Vec2::new(pane_width, 0.0),
-                                        Vec2::new(pane_width, ROW_HEIGHT),
-                                    );
-                                    paint_diff_cell(
-                                        ui,
-                                        left_rect,
-                                        row.left_number,
-                                        &row.left_text,
-                                        left_fill,
-                                    );
-                                    paint_diff_cell(
-                                        ui,
-                                        right_rect,
-                                        row.right_number,
-                                        &row.right_text,
-                                        right_fill,
-                                    );
-                                    ui.painter().line_segment(
-                                        [right_rect.left_top(), right_rect.left_bottom()],
-                                        Stroke::new(1.0_f32, BORDER),
-                                    );
-                                }
-                            });
-                    }
-                } else {
+                if rows.is_empty() {
                     surface().show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
-                        ui.colored_label(RED, "비교 내용을 만들지 못했습니다.");
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(32.0);
+                            ui.label(RichText::new("✓").size(26.0).color(GREEN));
+                            ui.label(RichText::new("두 내용이 같습니다").strong().color(INK));
+                            ui.add_space(32.0);
+                        });
+                    });
+                } else {
+                    let pane_width =
+                        diff_content_width(prepared.max_line_chars, ui.available_width());
+                    let scroll_area = inspection_scroll_area("inspection_diff_rows", scroll_to);
+                    scroll_area.show_rows(ui, ROW_HEIGHT, rows.len(), |ui, row_range| {
+                        ui.set_min_width(pane_width * 2.0);
+                        let content_rect = ui.available_rect_before_wrap();
+                        let painter = ui.painter();
+                        painter.rect_filled(content_rect, 0.0, BG);
+                        for gutter_left in [content_rect.left(), content_rect.left() + pane_width] {
+                            let gutter = Rect::from_min_max(
+                                egui::pos2(gutter_left, content_rect.top()),
+                                egui::pos2(gutter_left + GUTTER_WIDTH, content_rect.bottom()),
+                            );
+                            painter.rect_filled(gutter, 0.0, SURFACE);
+                            let border_x = gutter.right() - 1.0;
+                            painter.line_segment(
+                                [
+                                    egui::pos2(border_x, gutter.top()),
+                                    egui::pos2(border_x, gutter.bottom()),
+                                ],
+                                Stroke::new(1.0_f32, BORDER),
+                            );
+                        }
+                        let divider_x = content_rect.left() + pane_width;
+                        painter.line_segment(
+                            [
+                                egui::pos2(divider_x, content_rect.top()),
+                                egui::pos2(divider_x, content_rect.bottom()),
+                            ],
+                            Stroke::new(1.0_f32, BORDER),
+                        );
+                        let query = self.inspection_search.trim().to_lowercase();
+                        for row_index in row_range {
+                            let row = &rows[row_index];
+                            let hit = !query.is_empty()
+                                && (row.left_text.to_lowercase().contains(&query)
+                                    || row.right_text.to_lowercase().contains(&query));
+                            let left_fill = if hit {
+                                Color32::from_rgb(255, 243, 196)
+                            } else {
+                                match row.kind.as_str() {
+                                    "removed" | "modified" => RED.gamma_multiply(0.09),
+                                    _ => SURFACE,
+                                }
+                            };
+                            let right_fill = if hit {
+                                Color32::from_rgb(255, 243, 196)
+                            } else {
+                                match row.kind.as_str() {
+                                    "added" | "modified" => GREEN.gamma_multiply(0.09),
+                                    _ => SURFACE,
+                                }
+                            };
+                            let (rect, _) = ui.allocate_exact_size(
+                                Vec2::new(pane_width * 2.0, ROW_HEIGHT),
+                                Sense::hover(),
+                            );
+                            let left_rect =
+                                Rect::from_min_size(rect.min, Vec2::new(pane_width, ROW_HEIGHT));
+                            let right_rect = Rect::from_min_size(
+                                rect.min + Vec2::new(pane_width, 0.0),
+                                Vec2::new(pane_width, ROW_HEIGHT),
+                            );
+                            paint_diff_cell(
+                                ui,
+                                left_rect,
+                                row.left_number,
+                                &row.left_text,
+                                left_fill,
+                            );
+                            paint_diff_cell(
+                                ui,
+                                right_rect,
+                                row.right_number,
+                                &row.right_text,
+                                right_fill,
+                            );
+                            ui.painter().line_segment(
+                                [right_rect.left_top(), right_rect.left_bottom()],
+                                Stroke::new(1.0_f32, BORDER),
+                            );
+                        }
                     });
                 }
             });
@@ -252,6 +229,7 @@ impl MoaApp {
     }
 
     fn blame_window(&mut self, ctx: &egui::Context, open: &mut bool, blame: &BlameResult) {
+        let mut scroll_to = None;
         let title_path = Path::new(&blame.path)
             .file_name()
             .and_then(|name| name.to_str())
@@ -264,9 +242,6 @@ impl MoaApp {
             .min_size([640.0, 420.0])
             .max_size(window_size(ctx, [1050.0, 680.0]))
             .show(ctx, |ui| {
-                if self.busy.is_some() {
-                    ui.disable();
-                }
                 ui.horizontal_wrapped(|ui| {
                     ui.add(
                         egui::Label::new(RichText::new(&blame.path).strong().color(INK)).truncate(),
@@ -279,7 +254,7 @@ impl MoaApp {
                 });
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("검색").small().color(MUTED));
+                    ui.label(RichText::new("검색").size(13.0).color(MUTED));
                     ui.add_sized(
                         [ui.available_width().min(360.0), 30.0],
                         TextEdit::singleline(&mut self.inspection_search)
@@ -302,7 +277,7 @@ impl MoaApp {
                         });
                         if let Some(index) = found {
                             self.inspection_change_index = index;
-                            self.inspection_scroll = index as f32 * ROW_HEIGHT;
+                            scroll_to = Some(row_offset(index, row_stride(ui)));
                             self.inspection_status =
                                 format!("{}행으로 이동했습니다.", blame.lines[index].line_number);
                         } else {
@@ -347,9 +322,8 @@ impl MoaApp {
                         .max(260.0);
                 let table_width =
                     line_width + revision_width + author_width + date_width + code_width;
-                ScrollArea::both()
-                    .id_salt("inspection_blame_lines")
-                    .vertical_scroll_offset(self.inspection_scroll)
+                ScrollArea::horizontal()
+                    .id_salt("inspection_blame_horizontal")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.set_min_width(table_width);
@@ -363,22 +337,33 @@ impl MoaApp {
                                 code_width,
                             ],
                         );
-                        for (index, line) in blame.lines.iter().enumerate() {
-                            let selected = index == self.inspection_change_index
-                                && !self.inspection_search.trim().is_empty();
-                            paint_blame_row(
-                                ui,
-                                line,
-                                [
-                                    line_width,
-                                    revision_width,
-                                    author_width,
-                                    date_width,
-                                    code_width,
-                                ],
-                                selected,
-                            );
-                        }
+                        let scroll_area =
+                            inspection_vertical_scroll_area("inspection_blame_lines", scroll_to);
+                        scroll_area.show_rows(
+                            ui,
+                            ROW_HEIGHT,
+                            blame.lines.len(),
+                            |ui, row_range| {
+                                ui.set_min_width(table_width);
+                                for index in row_range {
+                                    let line = &blame.lines[index];
+                                    let selected = index == self.inspection_change_index
+                                        && !self.inspection_search.trim().is_empty();
+                                    paint_blame_row(
+                                        ui,
+                                        line,
+                                        [
+                                            line_width,
+                                            revision_width,
+                                            author_width,
+                                            date_width,
+                                            code_width,
+                                        ],
+                                        selected,
+                                    );
+                                }
+                            },
+                        );
                     });
             });
         if let Some(shown) = shown {
@@ -388,7 +373,12 @@ impl MoaApp {
 
     pub(super) fn conflict_ui(&mut self, ctx: &egui::Context) {
         let mut open = true;
-        if let Some(conflict) = self.conflict.clone() {
+        if let (Some(conflict), Some(prepared)) =
+            (self.conflict.clone(), self.conflict_view.clone())
+        {
+            if !Arc::ptr_eq(&conflict, &prepared.source) {
+                return;
+            }
             let title_path = Path::new(&conflict.path)
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -401,7 +391,7 @@ impl MoaApp {
                 .min_size([640.0, 420.0])
                 .max_size(window_size(ctx, [1080.0, 720.0]))
                 .show(ctx, |ui| {
-                    if self.busy.is_some() {
+                    if self.controls_locked() {
                         ui.disable();
                     }
                     section(
@@ -509,28 +499,38 @@ impl MoaApp {
 
                             ui.add_space(6.0);
                             ui.columns(2, |panes| {
-                                source_pane(
+                                source_pane_prepared(
                                     &mut panes[0],
                                     &conflict.left_label,
                                     &conflict.left_text,
+                                    &prepared.local,
                                     "conflict_local_source",
                                     RED,
                                     205.0,
                                 );
-                                source_pane(
+                                source_pane_prepared(
                                     &mut panes[1],
                                     &conflict.right_label,
                                     &conflict.right_text,
+                                    &prepared.incoming,
                                     "conflict_incoming_source",
                                     GREEN,
                                     205.0,
                                 );
                             });
-                            if let Some(base) = &conflict.base_text {
+                            if let (Some(base), Some(prepared_base)) =
+                                (&conflict.base_text, &prepared.base)
+                            {
                                 egui::CollapsingHeader::new("기준 내용 보기")
                                     .default_open(false)
                                     .show(ui, |ui| {
-                                        code_view(ui, "conflict_base_source", base, 150.0);
+                                        code_view_prepared(
+                                            ui,
+                                            "conflict_base_source",
+                                            base,
+                                            prepared_base,
+                                            150.0,
+                                        );
                                     });
                             }
 
@@ -567,6 +567,7 @@ impl MoaApp {
         }
         if !open {
             self.conflict = None;
+            self.conflict_view = None;
         }
     }
 }
@@ -579,21 +580,39 @@ fn source_header(ui: &mut egui::Ui, title: &str, color: Color32) {
     ui.add_space(4.0);
 }
 
-fn diff_content_width(rows: &[moavcs_core::text::ComparisonRow], available: f32) -> f32 {
-    let left = rows
-        .iter()
-        .map(|row| row.left_text.chars().count())
-        .max()
-        .unwrap_or(0);
-    let right = rows
-        .iter()
-        .map(|row| row.right_text.chars().count())
-        .max()
-        .unwrap_or(0);
-    let longest = left.max(right) as f32;
+fn diff_content_width(max_line_chars: usize, available: f32) -> f32 {
+    let longest = max_line_chars as f32;
     (available / 2.0)
         .max(GUTTER_WIDTH + 220.0)
         .max(GUTTER_WIDTH + longest * (CODE_FONT * 0.62) + 20.0)
+}
+
+fn row_stride(ui: &egui::Ui) -> f32 {
+    ROW_HEIGHT + ui.spacing().item_spacing.y
+}
+
+fn row_offset(row: usize, stride: f32) -> f32 {
+    row as f32 * stride
+}
+
+fn inspection_scroll_area(id: &'static str, jump_to: Option<f32>) -> ScrollArea {
+    let area = ScrollArea::both().id_salt(id).auto_shrink([false, false]);
+    if let Some(offset) = jump_to {
+        area.vertical_scroll_offset(offset)
+    } else {
+        area
+    }
+}
+
+fn inspection_vertical_scroll_area(id: &'static str, jump_to: Option<f32>) -> ScrollArea {
+    let area = ScrollArea::vertical()
+        .id_salt(id)
+        .auto_shrink([false, false]);
+    if let Some(offset) = jump_to {
+        area.vertical_scroll_offset(offset)
+    } else {
+        area
+    }
 }
 
 fn paint_diff_cell(
@@ -617,7 +636,7 @@ fn paint_diff_cell(
         rect.left_top() + Vec2::new(6.0, rect.height() / 2.0),
         Align2::LEFT_CENTER,
         number,
-        FontId::monospace(12.0),
+        FontId::monospace(13.0),
         MUTED,
     );
     painter.line_segment(
@@ -639,7 +658,7 @@ fn paint_diff_cell(
 fn paint_blame_header(ui: &mut egui::Ui, widths: [f32; 5]) {
     let labels = ["행", "리비전", "작성자", "날짜", "내용"];
     let total = widths.iter().sum();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(total, 30.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(total, ROW_HEIGHT), Sense::hover());
     ui.painter().rect_filled(rect, 4.0, NAVY);
     let mut x = rect.left();
     for (label, width) in labels.into_iter().zip(widths) {
@@ -647,7 +666,7 @@ fn paint_blame_header(ui: &mut egui::Ui, widths: [f32; 5]) {
             egui::pos2(x + 8.0, rect.center().y),
             Align2::LEFT_CENTER,
             label,
-            FontId::proportional(12.0),
+            FontId::proportional(13.0),
             Color32::WHITE,
         );
         x += width;
@@ -681,7 +700,7 @@ fn paint_blame_row(ui: &mut egui::Ui, line: &BlameLine, widths: [f32; 5], select
             if index == 4 {
                 FontId::monospace(CODE_FONT)
             } else {
-                FontId::proportional(12.0)
+                FontId::proportional(13.0)
             },
             if index == 0 { MUTED } else { INK },
         );
@@ -702,7 +721,15 @@ fn paint_blame_row(ui: &mut egui::Ui, line: &BlameLine, widths: [f32; 5], select
     );
 }
 
-fn source_pane(ui: &mut egui::Ui, label: &str, text: &str, id: &str, color: Color32, height: f32) {
+fn source_pane_prepared(
+    ui: &mut egui::Ui,
+    label: &str,
+    source: &str,
+    text: &PreparedText,
+    id: &str,
+    color: Color32,
+    height: f32,
+) {
     surface().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new("●").color(color));
@@ -710,7 +737,7 @@ fn source_pane(ui: &mut egui::Ui, label: &str, text: &str, id: &str, color: Colo
                 .on_hover_text(label);
         });
         ui.add_space(5.0);
-        code_view(ui, id, text, height);
+        code_view_prepared(ui, id, source, text, height);
     });
 }
 
@@ -825,5 +852,76 @@ mod tests {
 
         assert_eq!(result, "첫 줄\r\n바뀐 내용");
         assert!(!result.ends_with('\n'));
+    }
+}
+
+#[cfg(test)]
+mod scrolling_tests {
+    use super::egui::{self, CentralPanel, Context, Event, MouseWheelUnit, RawInput, Rect, Vec2};
+    use super::{inspection_scroll_area, row_offset};
+
+    const ROWS: usize = 1_000;
+    const ROW_HEIGHT: f32 = 29.0;
+    const ROW_STRIDE: f32 = 33.0;
+
+    fn frame(ctx: &Context, events: Vec<Event>, jump_to: Option<f32>) -> (f32, f32, f32) {
+        let mut result = (0.0, 0.0, 0.0);
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(800.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let _ =
+            ctx.run(input, |ctx| {
+                CentralPanel::default().show(ctx, |ui| {
+                    let output = inspection_scroll_area("inspection_scroll_test", jump_to)
+                        .show_rows(ui, ROW_HEIGHT, ROWS, |ui, range| {
+                            for row in range {
+                                ui.allocate_exact_size(
+                                    Vec2::new(500.0, ROW_HEIGHT),
+                                    egui::Sense::hover(),
+                                );
+                                std::hint::black_box(row);
+                            }
+                        });
+                    result = (
+                        output.state.offset.y,
+                        output.content_size.y,
+                        output.inner_rect.height(),
+                    );
+                });
+            });
+        result
+    }
+
+    #[test]
+    fn jump_to_last_virtual_row_lands_at_the_bottom() {
+        let ctx = Context::default();
+        let jump = row_offset(ROWS - 1, ROW_STRIDE);
+        let (offset, content_height, viewport_height) = frame(&ctx, Vec::new(), Some(jump));
+
+        assert!(offset + viewport_height >= content_height - ROW_STRIDE * 2.0);
+    }
+
+    #[test]
+    fn wheel_scroll_is_retained_when_the_next_frame_has_no_jump() {
+        let ctx = Context::default();
+        let _ = frame(&ctx, Vec::new(), None);
+        let wheel = vec![
+            Event::PointerMoved(egui::pos2(200.0, 200.0)),
+            Event::MouseWheel {
+                unit: MouseWheelUnit::Line,
+                delta: Vec2::new(0.0, -5.0),
+                modifiers: Default::default(),
+            },
+        ];
+        let (after_wheel, _, _) = frame(&ctx, wheel, None);
+        let (next_frame, _, _) = frame(&ctx, Vec::new(), None);
+
+        assert!(after_wheel > 0.0);
+        assert!(next_frame >= after_wheel);
     }
 }

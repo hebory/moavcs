@@ -1,15 +1,25 @@
 use eframe::egui::{self, Color32, FontId, Response, RichText, Stroke, Ui};
+use std::ops::Range;
 
-pub(super) const BG: Color32 = Color32::from_rgb(243, 245, 249);
+pub(super) const BG: Color32 = Color32::from_rgb(243, 246, 246);
 pub(super) const SURFACE: Color32 = Color32::WHITE;
-pub(super) const BORDER: Color32 = Color32::from_rgb(223, 229, 238);
-pub(super) const INK: Color32 = Color32::from_rgb(27, 40, 59);
-pub(super) const MUTED: Color32 = Color32::from_rgb(112, 126, 146);
-pub(super) const ACCENT: Color32 = Color32::from_rgb(215, 79, 47);
-pub(super) const BLUE: Color32 = Color32::from_rgb(54, 104, 185);
-pub(super) const GREEN: Color32 = Color32::from_rgb(38, 133, 100);
-pub(super) const RED: Color32 = Color32::from_rgb(190, 65, 73);
-pub(super) const NAVY: Color32 = Color32::from_rgb(24, 35, 52);
+pub(super) const BORDER: Color32 = Color32::from_rgb(207, 218, 219);
+pub(super) const INK: Color32 = Color32::from_rgb(25, 43, 49);
+pub(super) const MUTED: Color32 = Color32::from_rgb(78, 99, 107);
+pub(super) const ACCENT: Color32 = Color32::from_rgb(9, 105, 99);
+pub(super) const SELECTED: Color32 = Color32::from_rgb(223, 241, 237);
+pub(super) const BLUE: Color32 = Color32::from_rgb(41, 88, 149);
+pub(super) const GREEN: Color32 = Color32::from_rgb(23, 102, 68);
+pub(super) const RED: Color32 = Color32::from_rgb(157, 53, 65);
+pub(super) const NAVY: Color32 = Color32::from_rgb(23, 44, 51);
+const HEADING_FONT: &str = "Moa Semibold";
+
+pub(super) fn heading(text: impl Into<String>, size: f32) -> RichText {
+    RichText::new(text).font(FontId::new(
+        size,
+        egui::FontFamily::Name(HEADING_FONT.into()),
+    ))
+}
 
 pub(super) fn observe_window(ctx: &egui::Context, name: &str, rect: egui::Rect) {
     let key = egui::Id::new("smoke_window_bounds");
@@ -50,7 +60,7 @@ pub(super) fn primary(ui: &mut Ui, label: &str) -> Response {
         egui::Button::new(RichText::new(label).color(Color32::WHITE).strong())
             .fill(ACCENT)
             .stroke(Stroke::NONE)
-            .min_size(egui::vec2(88.0, 34.0)),
+            .min_size(egui::vec2(88.0, 36.0)),
     )
 }
 
@@ -59,16 +69,14 @@ pub(super) fn pill(ui: &mut Ui, text: &str, color: Color32) -> Response {
         .fill(color.gamma_multiply(0.10))
         .rounding(5.0)
         .inner_margin(egui::vec2(8.0, 4.0))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).color(color).size(11.5).strong())
-        })
+        .show(ui, |ui| ui.label(heading(text, 13.).color(color)))
         .response
 }
 
 pub(super) fn section(ui: &mut Ui, title: &str, subtitle: &str) {
-    ui.label(RichText::new(title).size(16.0).strong().color(INK));
+    ui.label(heading(title, 18.).color(INK));
     if !subtitle.is_empty() {
-        ui.label(RichText::new(subtitle).size(12.0).color(MUTED));
+        ui.label(RichText::new(subtitle).size(14.).color(MUTED));
     }
     ui.add_space(8.0);
 }
@@ -87,6 +95,7 @@ pub(super) enum Icon {
     Branch,
     Changes,
     History,
+    Output,
     Settings,
     Refresh,
     File,
@@ -124,6 +133,12 @@ pub(super) fn draw_icon(painter: &egui::Painter, rect: egui::Rect, icon: Icon, c
             for (x, y) in [(0.25, 0.15), (0.25, 0.85), (0.77, 0.15)] {
                 painter.circle(p(x, y), 2.2, SURFACE, stroke);
             }
+        }
+        Icon::Output => {
+            painter.rect_stroke(r, 2., stroke);
+            line((0.16, 0.3), (0.36, 0.5));
+            line((0.36, 0.5), (0.16, 0.7));
+            line((0.49, 0.7), (0.79, 0.7));
         }
         Icon::Changes | Icon::File => {
             painter.rect_stroke(
@@ -183,14 +198,16 @@ pub(super) fn draw_icon(painter: &egui::Painter, rect: egui::Rect, icon: Icon, c
 }
 
 pub(super) fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(30., 30.), egui::Sense::click());
-    if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, 6., BORDER.gamma_multiply(0.55));
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(36., 36.), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
+    });
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, 6., SELECTED);
     }
     draw_icon(
         ui.painter(),
-        rect.shrink(5.),
+        rect.shrink(7.),
         icon,
         if ui.is_enabled() {
             MUTED
@@ -201,33 +218,69 @@ pub(super) fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
     response.on_hover_text(tooltip)
 }
 
-pub(super) fn code_view(ui: &mut Ui, id: &str, text: &str, height: f32) {
-    let all_lines: Vec<_> = text.lines().collect();
-    // File identity and revision metadata already sit above the preview. Start
-    // a patch at its first hunk so short viewports show the changed code.
-    let hunk = if text.starts_with("diff --git ") {
-        all_lines
-            .iter()
-            .position(|line| line.starts_with("@@"))
-            .unwrap_or(0)
-    } else {
-        0
-    };
-    let lines = &all_lines[hunk..];
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PreparedText {
+    lines: Vec<Range<usize>>,
+    first_line: usize,
+    row_width: f32,
+}
+
+impl PreparedText {
+    pub(super) fn new(text: &str) -> Self {
+        let mut lines = Vec::new();
+        let mut longest = 0usize;
+        for line in text.lines() {
+            let start = line.as_ptr() as usize - text.as_ptr() as usize;
+            lines.push(start..start + line.len());
+            longest = longest.max(line.chars().count());
+        }
+        let first_line = if text.starts_with("diff --git ") {
+            lines
+                .iter()
+                .position(|range| text[range.clone()].starts_with("@@"))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        Self {
+            lines,
+            first_line,
+            row_width: longest.min(4096) as f32 * 9.0 + 76.,
+        }
+    }
+}
+
+pub(super) fn code_view_prepared(
+    ui: &mut Ui,
+    id: &str,
+    source: &str,
+    text: &PreparedText,
+    height: f32,
+) {
     let height = height.max(40.0);
     let width = ui.available_width();
-    let longest = lines
-        .iter()
-        .map(|s| s.chars().count())
-        .max()
-        .unwrap_or(0)
-        .min(4096) as f32;
-    let row_width = (longest * 8.2 + 76.).max(width);
-    ScrollAreaExt::render(ui, id, lines, height, row_width);
+    let row_width = text.row_width.max(width);
+    ScrollAreaExt::render(
+        ui,
+        id,
+        source,
+        &text.lines,
+        text.first_line,
+        height,
+        row_width,
+    );
 }
 struct ScrollAreaExt;
 impl ScrollAreaExt {
-    fn render(ui: &mut Ui, id: &str, lines: &[&str], height: f32, width: f32) {
+    fn render(
+        ui: &mut Ui,
+        id: &str,
+        source: &str,
+        lines: &[Range<usize>],
+        first_line: usize,
+        height: f32,
+        width: f32,
+    ) {
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.y = 0.;
             egui::ScrollArea::both()
@@ -235,42 +288,56 @@ impl ScrollAreaExt {
                 .auto_shrink([false, false])
                 .max_height(height)
                 .min_scrolled_height(height)
-                .show_rows(ui, 21.0, lines.len(), |ui, range| {
-                    for i in range {
-                        let line = lines[i];
-                        let (fg, bg) = if line.starts_with('+') && !line.starts_with("+++") {
-                            (GREEN, Color32::from_rgb(234, 246, 238))
-                        } else if line.starts_with('-') && !line.starts_with("---") {
-                            (RED, Color32::from_rgb(253, 237, 236))
-                        } else if line.starts_with("@@") {
-                            (BLUE, Color32::from_rgb(235, 241, 251))
-                        } else {
-                            (INK, Color32::TRANSPARENT)
-                        };
-                        let (r, _) =
-                            ui.allocate_exact_size(egui::vec2(width, 21.), egui::Sense::hover());
-                        ui.painter().rect_filled(r, 0., bg);
-                        ui.painter().rect_filled(
-                            egui::Rect::from_min_max(r.min, egui::pos2(r.left() + 45., r.bottom())),
-                            0.,
-                            Color32::from_rgb(247, 249, 252),
-                        );
-                        ui.painter().text(
-                            egui::pos2(r.left() + 35., r.center().y),
-                            egui::Align2::RIGHT_CENTER,
-                            (i + 1).to_string(),
-                            FontId::monospace(11.5),
-                            MUTED,
-                        );
-                        ui.painter().text(
-                            egui::pos2(r.left() + 57., r.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            line,
-                            FontId::monospace(12.5),
-                            fg,
-                        );
-                    }
-                });
+                .show_rows(
+                    ui,
+                    25.0,
+                    lines.len().saturating_sub(first_line),
+                    |ui, range| {
+                        for visible_index in range {
+                            let i = first_line + visible_index;
+                            let line = &source[lines[i].clone()];
+                            let (fg, bg) = if line.starts_with('+') && !line.starts_with("+++") {
+                                (GREEN, Color32::from_rgb(234, 246, 238))
+                            } else if line.starts_with('-') && !line.starts_with("---") {
+                                (RED, Color32::from_rgb(253, 237, 236))
+                            } else if line.starts_with("@@") {
+                                (BLUE, Color32::from_rgb(235, 241, 251))
+                            } else {
+                                (INK, Color32::TRANSPARENT)
+                            };
+                            let galley = ui.painter().layout_no_wrap(
+                                line.to_owned(),
+                                FontId::monospace(14.5),
+                                fg,
+                            );
+                            let (r, _) = ui.allocate_exact_size(
+                                egui::vec2(width.max(69. + galley.size().x), 25.),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().rect_filled(r, 0., bg);
+                            ui.painter().rect_filled(
+                                egui::Rect::from_min_max(
+                                    r.min,
+                                    egui::pos2(r.left() + 45., r.bottom()),
+                                ),
+                                0.,
+                                BG,
+                            );
+                            ui.painter().text(
+                                egui::pos2(r.left() + 35., r.center().y),
+                                egui::Align2::RIGHT_CENTER,
+                                (i + 1).to_string(),
+                                FontId::monospace(13.),
+                                MUTED,
+                            );
+                            ui.painter().galley(
+                                egui::pos2(r.left() + 57., r.center().y - galley.size().y / 2.),
+                                galley,
+                                fg,
+                            );
+                        }
+                    },
+                );
         });
     }
 }
@@ -281,32 +348,32 @@ pub fn configure_visuals(ctx: &egui::Context) {
     let v = &mut style.visuals;
     v.panel_fill = BG;
     v.window_fill = SURFACE;
-    v.extreme_bg_color = Color32::from_rgb(248, 250, 253);
-    v.faint_bg_color = Color32::from_rgb(246, 248, 252);
+    v.extreme_bg_color = Color32::from_rgb(249, 251, 250);
+    v.faint_bg_color = BG;
     v.override_text_color = Some(INK);
     v.window_rounding = 10.0.into();
     v.window_stroke = Stroke::new(1.0_f32, BORDER);
     v.window_shadow.color = Color32::from_black_alpha(30);
-    v.selection.bg_fill = Color32::from_rgb(230, 238, 251);
-    v.selection.stroke = Stroke::new(1.0_f32, BLUE);
+    v.selection.bg_fill = SELECTED;
+    v.selection.stroke = Stroke::new(1.0_f32, ACCENT);
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, INK);
     v.widgets.noninteractive.bg_fill = SURFACE;
     v.widgets.noninteractive.weak_bg_fill = SURFACE;
-    v.widgets.open.bg_fill = Color32::from_rgb(247, 249, 252);
-    v.widgets.open.weak_bg_fill = Color32::from_rgb(247, 249, 252);
+    v.widgets.open.bg_fill = SELECTED;
+    v.widgets.open.weak_bg_fill = SELECTED;
     v.widgets.open.fg_stroke = Stroke::new(1.0_f32, INK);
     v.widgets.inactive.bg_fill = SURFACE;
     v.widgets.inactive.weak_bg_fill = SURFACE;
     v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
     v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, INK);
-    v.widgets.hovered.bg_fill = Color32::from_rgb(238, 243, 251);
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(238, 243, 251);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(179, 196, 221));
+    v.widgets.hovered.bg_fill = Color32::from_rgb(234, 244, 241);
+    v.widgets.hovered.weak_bg_fill = v.widgets.hovered.bg_fill;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT);
     v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, INK);
-    v.widgets.active.bg_fill = Color32::from_rgb(228, 236, 249);
+    v.widgets.active.bg_fill = SELECTED;
     v.widgets.active.weak_bg_fill = v.widgets.active.bg_fill;
-    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, BLUE);
+    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACCENT);
     v.widgets.active.fg_stroke = Stroke::new(1.0_f32, INK);
     for widgets in [
         &mut v.widgets.inactive,
@@ -314,37 +381,39 @@ pub fn configure_visuals(ctx: &egui::Context) {
         &mut v.widgets.active,
         &mut v.widgets.noninteractive,
     ] {
-        widgets.rounding = 4.0.into();
+        widgets.rounding = 6.0.into();
         widgets.expansion = 0.;
     }
     style.spacing.item_spacing = egui::vec2(8., 8.);
-    style.spacing.button_padding = egui::vec2(11., 7.);
-    style.spacing.interact_size = egui::vec2(32., 30.);
+    style.spacing.button_padding = egui::vec2(11., 6.);
+    style.spacing.interact_size = egui::vec2(32., 32.);
     style.spacing.text_edit_width = 240.;
-    style.visuals.text_cursor.stroke = Stroke::new(1.5_f32, BLUE);
+    style.visuals.text_cursor.stroke = Stroke::new(1.5_f32, ACCENT);
     style
         .text_styles
-        .insert(egui::TextStyle::Body, FontId::proportional(13.5));
+        .insert(egui::TextStyle::Body, FontId::proportional(15.));
     style
         .text_styles
-        .insert(egui::TextStyle::Button, FontId::proportional(13.0));
+        .insert(egui::TextStyle::Button, FontId::proportional(15.));
     style
         .text_styles
-        .insert(egui::TextStyle::Small, FontId::proportional(11.5));
+        .insert(egui::TextStyle::Small, FontId::proportional(13.));
+    style.text_styles.insert(
+        egui::TextStyle::Heading,
+        FontId::new(20., egui::FontFamily::Name(HEADING_FONT.into())),
+    );
     style
         .text_styles
-        .insert(egui::TextStyle::Heading, FontId::proportional(18.));
-    style
-        .text_styles
-        .insert(egui::TextStyle::Monospace, FontId::monospace(12.5));
+        .insert(egui::TextStyle::Monospace, FontId::monospace(14.5));
     ctx.set_style(style);
+    let mut fonts = egui::FontDefinitions::default();
+    let mut heading_fonts = Vec::new();
     #[cfg(windows)]
     {
         let fonts_dir = std::path::PathBuf::from(
             std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into()),
         )
         .join("Fonts");
-        let mut fonts = egui::FontDefinitions::default();
         if let Ok(bytes) = std::fs::read(fonts_dir.join("segoeui.ttf")) {
             fonts
                 .font_data
@@ -367,6 +436,22 @@ pub fn configure_visuals(ctx: &egui::Context) {
                     .push("moa_korean".into());
             }
         }
-        ctx.set_fonts(fonts);
+        for file in ["seguisb.ttf", "malgunbd.ttf"] {
+            if let Ok(bytes) = std::fs::read(fonts_dir.join(file)) {
+                fonts
+                    .font_data
+                    .insert(file.into(), egui::FontData::from_owned(bytes));
+                heading_fonts.push(file.to_owned());
+            }
+        }
     }
+    heading_fonts.extend(
+        fonts.families[&egui::FontFamily::Proportional]
+            .iter()
+            .cloned(),
+    );
+    fonts
+        .families
+        .insert(egui::FontFamily::Name(HEADING_FONT.into()), heading_fonts);
+    ctx.set_fonts(fonts);
 }

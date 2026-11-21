@@ -129,6 +129,7 @@ pub fn run(output: PathBuf) -> eframe::Result {
         "remote.png",
         "conflict.png",
         "long-labels-min.png",
+        "workspace-list.png",
         "workspace.assertions.json",
         "history.assertions.json",
         "diff.assertions.json",
@@ -143,6 +144,35 @@ pub fn run(output: PathBuf) -> eframe::Result {
             fail(&output, &format!("UI smoke did not create {file}"));
         }
     }
+    Ok(())
+}
+
+pub fn prepare_workspace_list(workspace: &Path) -> Result<(), String> {
+    // Only called in the private smoke fixture, after the conflict scenarios.
+    let fixture = workspace.parent().ok_or("missing fixture directory")?;
+    let folders = ["client", "core", "ui"];
+    let names = [
+        "actions",
+        "comparison",
+        "history",
+        "navigation",
+        "selection",
+        "status",
+    ];
+    for folder in folders {
+        let dir = workspace.join(folder);
+        fs::create_dir(&dir).map_err(|e| e.to_string())?;
+        for name in names {
+            fs::write(dir.join(format!("{name}.rs")), format!("pub mod {name};\n"))
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    git(fixture, workspace, ["add", "--", "client"])?;
+    fs::write(
+        workspace.join("client/history.rs"),
+        "pub mod history;\npub mod branches;\n",
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

@@ -264,14 +264,14 @@ impl MoaApp {
                 if self.busy.is_some() {
                     ui.disable();
                 }
-                let footer_height = 52.0;
+                let footer_height = 68.0;
                 let content_height = (ui.available_height() - footer_height).max(240.0);
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), content_height),
                     Layout::top_down(Align::Min),
                     |ui| {
                         ui.horizontal(|ui| {
-                            let nav_width = 168.0_f32.min((ui.available_width() * 0.28).max(126.0));
+                            let nav_width = 184.0_f32.min((ui.available_width() * 0.30).max(138.0));
                             ui.allocate_ui_with_layout(
                                 egui::vec2(nav_width, ui.available_height()),
                                 Layout::top_down(Align::Min),
@@ -343,12 +343,12 @@ impl MoaApp {
                     },
                 );
                 ui.separator();
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if let Some(notice) = self.notice.as_deref() {
-                        let status_width = (ui.available_width() - 126.0).max(80.0);
+                        let status_width = (ui.available_width() - 148.0).max(80.0);
                         ui.add_sized(
-                            [status_width, 34.0],
-                            egui::Label::new(RichText::new(notice).small().color(MUTED)).wrap(),
+                            [status_width, 42.0],
+                            egui::Label::new(RichText::new(notice).color(INK)).wrap(),
                         );
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -661,7 +661,7 @@ fn settings_nav(
             if response.clicked() {
                 *selected = tab;
             }
-            ui.label(RichText::new(subtitle).small().color(MUTED));
+            ui.label(RichText::new(subtitle).size(13.0).color(MUTED));
         });
     ui.add_space(8.0);
 }
