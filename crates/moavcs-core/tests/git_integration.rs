@@ -319,6 +319,38 @@ fn real_git_workflow_preserves_literal_paths_history_remote_and_conflicts() {
     assert!(triangular.push_target_id.is_empty());
     assert_eq!(triangular.push_ahead, None);
     assert_eq!(triangular.push_behind, None);
+    let push_backup = req(Operation::Push, &base);
+    provider.execute(&push_backup, &CancelToken::new()).unwrap();
+    // Publication status is intentionally based on local tracking refs, so fetch the
+    // push-only remote after pushing to make its latest tip available locally.
+    successful(&base, &["fetch", "backup"]);
+    let after_backup_push = provider
+        .git_sync_status(&base, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!(after_backup_push.ahead, Some(1));
+    assert_eq!(after_backup_push.behind, Some(0));
+    assert_eq!(after_backup_push.push_ahead, Some(0));
+    assert_eq!(after_backup_push.push_behind, Some(0));
+    let after_backup_history = provider
+        .history(&base, HistoryScope::CurrentBranch, &CancelToken::new())
+        .unwrap();
+    assert_eq!(
+        after_backup_history.entries[0].relation,
+        HistoryRelation::LocalOnly
+    );
+    assert_eq!(
+        after_backup_history.entries[0].push_relation,
+        Some(HistoryRelation::Shared)
+    );
+    assert_eq!(
+        after_backup_history.entries[1].relation,
+        HistoryRelation::Shared
+    );
+    assert_eq!(
+        after_backup_history.entries[1].push_relation,
+        Some(HistoryRelation::Shared)
+    );
     successful(&base, &["config", "--local", "--unset", &push_remote_key]);
     successful(&base, &["config", "--local", "--unset", "push.default"]);
     successful(
