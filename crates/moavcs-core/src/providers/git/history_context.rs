@@ -3,6 +3,12 @@ use crate::models::{HistoryReference, HistoryReferenceKind};
 use std::collections::{HashMap, HashSet};
 
 const LIMIT: usize = 200;
+const REACHABILITY_LIMIT: usize = 50_000;
+
+struct Reachability {
+    ids: HashSet<String>,
+    complete: bool,
+}
 impl GitProvider {
     pub(super) fn snapshot_impl(
         &self,
@@ -41,6 +47,9 @@ impl GitProvider {
             if !context.upstream_id.is_empty() && unique.insert(context.upstream_id.clone()) {
                 starts.push(context.upstream_id.clone())
             }
+            if !context.push_target_id.is_empty() && unique.insert(context.push_target_id.clone()) {
+                starts.push(context.push_target_id.clone())
+            }
         }
         if starts.is_empty() {
             return Ok(HistorySnapshot {
@@ -78,14 +87,28 @@ impl GitProvider {
             }
         }
         let local = if context.head_id.is_empty() {
-            HashSet::new()
+            Reachability {
+                ids: HashSet::new(),
+                complete: true,
+            }
         } else {
             self.reachable(&root, &context.head_id, cancel)?
+                .unwrap_or(Reachability {
+                    ids: HashSet::new(),
+                    complete: false,
+                })
         };
         let upstream = if context.upstream_id.is_empty() {
             None
         } else {
-            Some(self.reachable(&root, &context.upstream_id, cancel)?)
+            self.reachable(&root, &context.upstream_id, cancel)?
+        };
+        let push_target = if context.push_target_id.is_empty() || context.is_shallow {
+            None
+        } else if context.push_target_id == context.upstream_id {
+            None
+        } else {
+            self.reachable(&root, &context.push_target_id, cancel)?
         };
         for entry in &mut entries {
             if entry.id == context.head_id {
@@ -105,6 +128,20 @@ impl GitProvider {
                 &context,
                 cancel,
             )?;
+            entry.push_relation = if !context.push_target_id.is_empty()
+                && context.push_target_id == context.upstream_id
+            {
+                (entry.relation != HistoryRelation::Unknown).then_some(entry.relation)
+            } else {
+                self.push_relation(
+                    &root,
+                    &entry.id,
+                    &local,
+                    push_target.as_ref(),
+                    &context,
+                    cancel,
+                )?
+            };
         }
         let mut label = match scope {
             HistoryScope::AllBranches => {
@@ -130,7 +167,11 @@ impl GitProvider {
             is_truncated: truncated,
         })
     }
-    fn git_context(&self, root: &Path, cancel: &CancelToken) -> Result<GitHistoryContext> {
+    pub(super) fn git_context(
+        &self,
+        root: &Path,
+        cancel: &CancelToken,
+    ) -> Result<GitHistoryContext> {
         let shallow = self
             .run(
                 root,
@@ -188,7 +229,8 @@ impl GitProvider {
             ..Default::default()
         };
         if !unborn && !detached {
-            let (up, upid, push, pushid) = self.branch_refs(root, &c.current_branch, cancel)?;
+            let (up, upid, push_remote, push_ref, push, pushid) =
+                self.branch_refs(root, &c.current_branch, cancel)?;
             c.upstream = up;
             c.upstream_id = upid;
             c.push_target = push;
@@ -200,50 +242,150 @@ impl GitProvider {
             } else if shallow {
                 c.status = "얕은 저장소 · 내려받은 범위 밖의 차이는 계산하지 않음".into()
             } else {
-                let r = self.run(
-                    root,
-                    vec![
-                        "rev-list".into(),
-                        "--left-right".into(),
-                        "--count".into(),
-                        format!("{}...{}", c.upstream_id, head),
-                    ],
-                    cancel,
-                )?;
-                if r.success() {
-                    let f: Vec<_> = r.stdout.split_whitespace().collect();
-                    if f.len() == 2 {
-                        if let (Ok(behind), Ok(ahead)) = (f[0].parse(), f[1].parse()) {
-                            c.behind = Some(behind);
-                            c.ahead = Some(ahead);
-                            c.status = if ahead == 0 && behind == 0 {
-                                "추적 브랜치와 동기화됨"
-                            } else if ahead > 0 && behind > 0 {
-                                "로컬·추적 브랜치가 서로 다름"
-                            } else if ahead > 0 {
-                                "추적 브랜치에 없는 로컬 커밋 있음"
-                            } else {
-                                "현재 브랜치에 없는 추적 커밋 있음"
-                            }
-                            .into()
-                        }
+                if let Some((behind, ahead)) =
+                    self.revision_counts(root, &c.upstream_id, &head, cancel)?
+                {
+                    c.behind = Some(behind);
+                    c.ahead = Some(ahead);
+                    c.status = if ahead == 0 && behind == 0 {
+                        "추적 브랜치와 동기화됨"
+                    } else if ahead > 0 && behind > 0 {
+                        "로컬·추적 브랜치가 서로 다름"
+                    } else if ahead > 0 {
+                        "추적 브랜치에 없는 로컬 커밋 있음"
+                    } else {
+                        "현재 브랜치에 없는 추적 커밋 있음"
                     }
+                    .into()
                 }
+            }
+            let push_comparable = !push_ref.is_empty()
+                && self.push_destination_is_fetch_remote(root, &push_remote, cancel)?;
+            if !push_comparable {
+                // The configured destination may be a different server than this local
+                // remote-tracking ref. Do not expose that ref as if it were the push tip.
+                c.push_target_id.clear();
+            }
+            if push_comparable
+                && !c.push_target_id.is_empty()
+                && !shallow
+                && c.push_target_id != c.upstream_id
+            {
+                if let Some((behind, ahead)) =
+                    self.revision_counts(root, &c.push_target_id, &head, cancel)?
+                {
+                    c.push_behind = Some(behind);
+                    c.push_ahead = Some(ahead);
+                }
+            } else if push_comparable
+                && !c.push_target_id.is_empty()
+                && c.push_target_id == c.upstream_id
+            {
+                c.push_behind = c.behind;
+                c.push_ahead = c.ahead;
             }
         }
         Ok(c)
+    }
+    fn revision_counts(
+        &self,
+        root: &Path,
+        reference: &str,
+        head: &str,
+        cancel: &CancelToken,
+    ) -> Result<Option<(u64, u64)>> {
+        let result = self.run(
+            root,
+            vec![
+                "rev-list".into(),
+                "--left-right".into(),
+                "--count".into(),
+                format!("{reference}...{head}"),
+            ],
+            cancel,
+        )?;
+        if !result.success() {
+            return Ok(None);
+        }
+        let fields: Vec<_> = result.stdout.split_whitespace().collect();
+        if fields.len() != 2 {
+            return Ok(None);
+        }
+        Ok(fields[0].parse().ok().zip(fields[1].parse().ok()))
+    }
+    /// A remote-tracking ref is a valid local approximation of the push destination only
+    /// when that remote has one fetch URL and one identical push URL. Otherwise counts would
+    /// describe a different or ambiguous server, so leave them unknown.
+    fn push_destination_is_fetch_remote(
+        &self,
+        root: &Path,
+        remote: &str,
+        cancel: &CancelToken,
+    ) -> Result<bool> {
+        if remote.is_empty() {
+            return Ok(false);
+        }
+        let push_refspecs = self.run(
+            root,
+            vec![
+                "config".into(),
+                "--get-all".into(),
+                format!("remote.{remote}.push"),
+            ],
+            cancel,
+        )?;
+        if push_refspecs.success() || push_refspecs.exit_code != 1 {
+            return Ok(false);
+        }
+        let fetch_urls = self.run(
+            root,
+            vec![
+                "remote".into(),
+                "get-url".into(),
+                "--all".into(),
+                (*remote).into(),
+            ],
+            cancel,
+        )?;
+        let push_urls = self.run(
+            root,
+            vec![
+                "remote".into(),
+                "get-url".into(),
+                "--push".into(),
+                "--all".into(),
+                (*remote).into(),
+            ],
+            cancel,
+        )?;
+        if !fetch_urls.success() || !push_urls.success() {
+            return Ok(false);
+        }
+        let fetch: Vec<_> = fetch_urls
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let push: Vec<_> = push_urls
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        Ok(fetch.len() == 1 && push.len() == 1 && fetch[0] == push[0])
     }
     fn branch_refs(
         &self,
         root: &Path,
         branch: &str,
         cancel: &CancelToken,
-    ) -> Result<(String, String, String, String)> {
+    ) -> Result<(String, String, String, String, String, String)> {
         let r = self.run(
             root,
             vec![
                 "for-each-ref".into(),
-                "--format=%(upstream)%00%(upstream:short)%00%(push)%00%(push:short)%00".into(),
+                "--format=%(upstream)%00%(upstream:short)%00%(push:remotename)%00%(push)%00%(push:short)%00".into(),
                 format!("refs/heads/{branch}"),
             ],
             cancel,
@@ -256,14 +398,15 @@ impl GitProvider {
             .trim_end_matches(['\r', '\n'])
             .split('\0')
             .collect();
-        if f.len() < 4 {
+        if f.len() < 6 {
             return Ok(Default::default());
         }
         let up = f[1].to_owned();
-        let push = f[3].to_owned();
+        let push_remote = f[2].to_owned();
+        let push = f[4].to_owned();
         let upid = self.ref_oid(root, f[0], cancel)?;
-        let pushid = self.ref_oid(root, f[2], cancel)?;
-        Ok((up, upid, push, pushid))
+        let pushid = self.ref_oid(root, f[3], cancel)?;
+        Ok((up, upid, push_remote, f[3].to_owned(), push, pushid))
     }
     fn ref_oid(&self, root: &Path, reference: &str, cancel: &CancelToken) -> Result<String> {
         if !reference.starts_with("refs/") {
@@ -326,21 +469,33 @@ impl GitProvider {
         tips.sort();
         Ok((refs, tips))
     }
-    fn reachable(&self, root: &Path, tip: &str, cancel: &CancelToken) -> Result<HashSet<String>> {
+    fn reachable(
+        &self,
+        root: &Path,
+        tip: &str,
+        cancel: &CancelToken,
+    ) -> Result<Option<Reachability>> {
         let r = self.run(
             root,
-            vec!["rev-list".into(), "--max-count=50000".into(), tip.into()],
+            vec![
+                "rev-list".into(),
+                format!("--max-count={REACHABILITY_LIMIT}"),
+                tip.into(),
+            ],
             cancel,
         )?;
         if !r.success() {
-            return Ok(HashSet::new());
+            return Ok(None);
         }
-        Ok(r.stdout
+        let ids: HashSet<_> = r
+            .stdout
             .lines()
             .map(str::trim)
             .filter(|s| is_oid(s))
             .map(str::to_owned)
-            .collect())
+            .collect();
+        let complete = ids.len() < REACHABILITY_LIMIT;
+        Ok(Some(Reachability { ids, complete }))
     }
     fn raw_parents(&self, root: &Path, id: &str, cancel: &CancelToken) -> Result<Vec<String>> {
         let out = self.required(
@@ -361,21 +516,21 @@ impl GitProvider {
         &self,
         root: &Path,
         id: &str,
-        local: &HashSet<String>,
-        upstream: Option<&HashSet<String>>,
+        local: &Reachability,
+        upstream: Option<&Reachability>,
         context: &GitHistoryContext,
         cancel: &CancelToken,
     ) -> Result<HistoryRelation> {
-        if context.is_shallow || upstream.is_none() {
+        if context.is_shallow || upstream.is_none() || !local.complete && local.ids.is_empty() {
             return Ok(HistoryRelation::Unknown);
         }
-        let mut l = local.contains(id);
-        if !l && !context.head_id.is_empty() {
+        let mut l = local.ids.contains(id);
+        if !l && !local.complete && !context.head_id.is_empty() {
             l = self.ancestor(root, id, &context.head_id, cancel)?
         }
         let up = upstream.unwrap();
-        let mut u = up.contains(id);
-        if !u && !context.upstream_id.is_empty() {
+        let mut u = up.ids.contains(id);
+        if !u && !up.complete && !context.upstream_id.is_empty() {
             u = self.ancestor(root, id, &context.upstream_id, cancel)?
         }
         Ok(match (l, u) {
@@ -384,6 +539,35 @@ impl GitProvider {
             (false, true) => HistoryRelation::UpstreamOnly,
             _ => HistoryRelation::Other,
         })
+    }
+    fn push_relation(
+        &self,
+        root: &Path,
+        id: &str,
+        local: &Reachability,
+        push_target: Option<&Reachability>,
+        context: &GitHistoryContext,
+        cancel: &CancelToken,
+    ) -> Result<Option<HistoryRelation>> {
+        if context.is_shallow || context.push_target_id.is_empty() || push_target.is_none() {
+            return Ok(None);
+        }
+        let push = push_target.unwrap();
+        if !local.complete && local.ids.is_empty() || !push.complete && push.ids.is_empty() {
+            return Ok(None);
+        }
+        let local_has = local.ids.contains(id)
+            || (!local.complete
+                && !context.head_id.is_empty()
+                && self.ancestor(root, id, &context.head_id, cancel)?);
+        let push_has = push.ids.contains(id)
+            || (!push.complete && self.ancestor(root, id, &context.push_target_id, cancel)?);
+        Ok(Some(match (local_has, push_has) {
+            (true, true) => HistoryRelation::Shared,
+            (true, false) => HistoryRelation::LocalOnly,
+            (false, true) => HistoryRelation::UpstreamOnly,
+            _ => HistoryRelation::Other,
+        }))
     }
     fn ancestor(
         &self,

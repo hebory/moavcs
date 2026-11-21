@@ -138,6 +138,9 @@ pub struct HistoryEntry {
     pub parent_ids: Vec<String>,
     pub references: Vec<HistoryReference>,
     pub relation: HistoryRelation,
+    /// Reachability relation to the configured local push destination.
+    /// This is `None` when no unambiguous, locally available destination exists.
+    pub push_relation: Option<HistoryRelation>,
     pub author_email: String,
     pub committer: String,
     pub committer_email: String,
@@ -188,6 +191,8 @@ pub struct GitHistoryContext {
     pub push_target_id: String,
     pub ahead: Option<u64>,
     pub behind: Option<u64>,
+    pub push_ahead: Option<u64>,
+    pub push_behind: Option<u64>,
     pub is_shallow: bool,
     pub status: String,
 }

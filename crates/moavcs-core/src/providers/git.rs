@@ -168,6 +168,14 @@ impl VcsProvider for GitProvider {
             .stdout;
         parse_status(&output, &root)
     }
+    fn git_sync_status(
+        &self,
+        root: &Path,
+        cancel: &CancelToken,
+    ) -> Result<Option<GitHistoryContext>> {
+        let root = self.root(root, cancel)?;
+        self.git_context(&root, cancel).map(Some)
+    }
     fn diff(
         &self,
         root: &Path,
@@ -191,7 +199,7 @@ impl VcsProvider for GitProvider {
         ]);
         if let Some(file) = file {
             let path = self.path(&root, &file.path)?;
-            if !staged && file.index_status == "?" && file.worktree_status == "?" {
+            if !staged && file.status == "untracked" {
                 return self.untracked_diff(&root, &path, cancel);
             }
             args.extend(["--".into(), path]);
@@ -205,7 +213,7 @@ impl VcsProvider for GitProvider {
             for change in self
                 .status(&root, cancel)?
                 .into_iter()
-                .filter(|f| f.index_status == "?" && f.worktree_status == "?")
+                .filter(|f| f.status == "untracked")
                 .take(30)
             {
                 let d = self.untracked_diff(&root, &change.path, cancel)?;

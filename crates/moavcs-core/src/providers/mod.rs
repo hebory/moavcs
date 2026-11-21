@@ -14,6 +14,14 @@ pub trait VcsProvider: Send + Sync {
     fn capabilities(&self) -> Capabilities;
     fn repository(&self, path: &Path, cancel: &CancelToken) -> Result<RepositoryInfo>;
     fn status(&self, root: &Path, cancel: &CancelToken) -> Result<Vec<FileChange>>;
+    /// Reads local branch tracking and publication state without contacting a remote.
+    fn git_sync_status(
+        &self,
+        _root: &Path,
+        _cancel: &CancelToken,
+    ) -> Result<Option<GitHistoryContext>> {
+        Ok(None)
+    }
     fn diff(
         &self,
         root: &Path,

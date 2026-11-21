@@ -149,6 +149,7 @@ pub(super) fn read_entry(
         parent_ids: parents,
         references: Vec::new(),
         relation: HistoryRelation::Unknown,
+        push_relation: None,
         author_email: f[3].into(),
         committer: f[5].into(),
         committer_email: f[6].into(),

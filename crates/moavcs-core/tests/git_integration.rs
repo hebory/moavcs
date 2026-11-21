@@ -98,6 +98,16 @@ fn real_git_workflow_preserves_literal_paths_history_remote_and_conflicts() {
     // The literal metacharacters and Unicode in this filename exercise pathspec safety.
     let file = "한글 [literal].txt";
     std::fs::write(base.join(file), "first\nsecond\n").unwrap();
+    let untracked = provider.status(&base, &CancelToken::new()).unwrap();
+    let untracked_file = untracked
+        .iter()
+        .find(|change| change.path == file)
+        .expect("new file should be marked untracked");
+    assert_eq!(untracked_file.status, "untracked");
+    let untracked_diff = provider
+        .diff(&base, Some(untracked_file), false, &CancelToken::new())
+        .unwrap();
+    assert!(untracked_diff.contains("+first"));
     let mut stage = req(Operation::Stage, &base);
     stage.paths = vec![file.into()];
     provider.execute(&stage, &CancelToken::new()).unwrap();
@@ -232,6 +242,104 @@ fn real_git_workflow_preserves_literal_paths_history_remote_and_conflicts() {
     assert!(!context.upstream.is_empty());
     assert_eq!(context.ahead, Some(0));
     assert_eq!(context.behind, Some(0));
+    assert_eq!(context.push_ahead, Some(0));
+    assert_eq!(context.push_behind, Some(0));
+    let sync = provider
+        .git_sync_status(&base, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!(sync.head_id, context.head_id);
+    assert_eq!(sync.push_ahead, Some(0));
+    assert_eq!(sync.push_behind, Some(0));
+    let pushed_history = provider
+        .history(&base, HistoryScope::CurrentBranch, &CancelToken::new())
+        .unwrap();
+    assert!(pushed_history
+        .entries
+        .iter()
+        .all(|entry| entry.push_relation == Some(HistoryRelation::Shared)));
+    let unpublished = "아직 푸시하지 않은 변경.txt";
+    std::fs::write(base.join(unpublished), "local only\n").unwrap();
+    let mut stage_unpublished = req(Operation::Stage, &base);
+    stage_unpublished.paths = vec![unpublished.into()];
+    provider
+        .execute(&stage_unpublished, &CancelToken::new())
+        .unwrap();
+    commit(&provider, &base, "푸시 대기 커밋");
+    let ahead = provider
+        .git_sync_status(&base, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!(ahead.ahead, Some(1));
+    assert_eq!(ahead.behind, Some(0));
+    assert_eq!(ahead.push_ahead, Some(1));
+    assert_eq!(ahead.push_behind, Some(0));
+    let ahead_history = provider
+        .history(&base, HistoryScope::CurrentBranch, &CancelToken::new())
+        .unwrap();
+    assert_eq!(
+        ahead_history.entries[0].push_relation,
+        Some(HistoryRelation::LocalOnly)
+    );
+    assert_eq!(
+        ahead_history.entries[1].push_relation,
+        Some(HistoryRelation::Shared)
+    );
+    let backup = base.parent().unwrap().join("push-only.git");
+    successful(
+        base.parent().unwrap(),
+        &["init", "--bare", backup.to_str().unwrap()],
+    );
+    successful(
+        &base,
+        &[
+            "config",
+            "--local",
+            "remote.backup.url",
+            backup.to_str().unwrap(),
+        ],
+    );
+    successful(
+        &base,
+        &[
+            "config",
+            "--local",
+            "remote.backup.fetch",
+            "+refs/heads/*:refs/remotes/backup/*",
+        ],
+    );
+    successful(&base, &["config", "--local", "push.default", "current"]);
+    let push_remote_key = format!("branch.{}.pushRemote", ahead.current_branch);
+    successful(&base, &["config", "--local", &push_remote_key, "backup"]);
+    let triangular = provider
+        .git_sync_status(&base, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert!(triangular.push_target.starts_with("backup/"));
+    assert!(triangular.push_target_id.is_empty());
+    assert_eq!(triangular.push_ahead, None);
+    assert_eq!(triangular.push_behind, None);
+    successful(&base, &["config", "--local", "--unset", &push_remote_key]);
+    successful(&base, &["config", "--local", "--unset", "push.default"]);
+    successful(
+        &base,
+        &[
+            "config",
+            "--local",
+            "remote.origin.pushurl",
+            backup.to_str().unwrap(),
+        ],
+    );
+    let pushurl_differs = provider
+        .git_sync_status(&base, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!(pushurl_differs.push_ahead, None);
+    assert_eq!(pushurl_differs.push_behind, None);
+    successful(
+        &base,
+        &["config", "--local", "--unset-all", "remote.origin.pushurl"],
+    );
     let mirror = base.parent().unwrap().join("second-fetch.git");
     let mirror_url = mirror.to_string_lossy().into_owned();
     successful(
