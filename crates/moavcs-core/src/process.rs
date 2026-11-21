@@ -159,9 +159,9 @@ impl CommandRunner for ProcessRunner {
                 ));
                 break None;
             }
-            match child.try_wait() {
+            match wait_for_exit(&mut child) {
                 Ok(Some(status)) => break Some(status),
-                Ok(None) => thread::sleep(Duration::from_millis(20)),
+                Ok(None) => continue,
                 Err(e) => {
                     failure = Some(e.to_string());
                     break None;
@@ -213,6 +213,36 @@ impl CommandRunner for ProcessRunner {
             stderr: std::mem::take(&mut outputs[1]),
         })
     }
+}
+
+// Wake as soon as a short CLI command finishes, while still checking
+// cancellation, timeouts and output limits during long-running commands.
+#[cfg(windows)]
+fn wait_for_exit(
+    child: &mut std::process::Child,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::{
+        Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
+        System::Threading::WaitForSingleObject,
+    };
+    // The child owns this handle for the duration of the wait.
+    match unsafe { WaitForSingleObject(HANDLE(child.as_raw_handle()), 20) } {
+        WAIT_OBJECT_0 => child.wait().map(Some),
+        WAIT_TIMEOUT => Ok(None),
+        _ => Err(std::io::Error::last_os_error()),
+    }
+}
+
+#[cfg(not(windows))]
+fn wait_for_exit(
+    child: &mut std::process::Child,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    let status = child.try_wait()?;
+    if status.is_none() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Ok(status)
 }
 
 #[cfg(windows)]
